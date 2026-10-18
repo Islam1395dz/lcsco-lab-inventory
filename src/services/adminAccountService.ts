@@ -77,6 +77,15 @@ export async function completeOnboardingPasswordChange(): Promise<{ success: boo
   return adminApiFetch<{ success: boolean }>('/api/admin/complete-password-change', {});
 }
 
+/**
+ * Issues a fresh temporary password for a member who has not completed their
+ * first login yet, and re-sends the welcome email. The server refuses for
+ * members who already replaced their temporary password.
+ */
+export async function resendWelcomeEmail(targetUid: string): Promise<ProvisionedAccount> {
+  return adminApiFetch<ProvisionedAccount>('/api/admin/resend-welcome', { targetUid });
+}
+
 /** Which slice of the official reference inventory to import. */
 export type ReferenceInventoryKind = 'locations' | 'products' | 'containers';
 

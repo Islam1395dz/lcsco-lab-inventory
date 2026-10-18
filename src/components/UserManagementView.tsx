@@ -21,6 +21,7 @@ import {
 import {
   deleteLabMemberAccount,
   provisionLabMemberAccount,
+  resendWelcomeEmail,
   type ProvisionedAccount,
 } from '../services/adminAccountService';
 import { parseDisplayError } from '../firebase';
@@ -54,6 +55,10 @@ export const UserManagementView: React.FC = () => {
   /** One-time display of the temporary password returned by the provisioning API. */
   const [provisionedAccount, setProvisionedAccount] = useState<ProvisionedAccount | null>(null);
   const [copiedTempPassword, setCopiedTempPassword] = useState(false);
+  /** Member whose welcome email is currently being re-issued. */
+  const [resendingUid, setResendingUid] = useState<string | null>(null);
+  /** Distinguishes a fresh provisioning from a re-issued invitation in the credentials modal. */
+  const [credentialsReason, setCredentialsReason] = useState<'created' | 'resent'>('created');
 
   const productAggregateStock = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -90,6 +95,7 @@ export const UserManagementView: React.FC = () => {
           laboratoryIds: ['LCSCO'],
         });
         setProvisionedAccount(provisioned);
+        setCredentialsReason('created');
         setShowAddUserModal(false);
         setNewMemberName('');
         setNewMemberEmail('');
@@ -146,6 +152,21 @@ export const UserManagementView: React.FC = () => {
       setShowAddUserModal(false);
     } catch (err) {
       setFeedback({ type: 'error', message: parseDisplayError(err) });
+    }
+  };
+
+  const handleResendWelcomeEmail = async (targetUser: UserProfile) => {
+    if (!profile) return;
+    setFeedback(null);
+    setResendingUid(targetUser.uid);
+    try {
+      const reissued = await resendWelcomeEmail(targetUser.uid);
+      setCredentialsReason('resent');
+      setProvisionedAccount(reissued);
+    } catch (err) {
+      setFeedback({ type: 'error', message: parseDisplayError(err) });
+    } finally {
+      setResendingUid(null);
     }
   };
 
@@ -443,6 +464,29 @@ export const UserManagementView: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
+                          {u.mustChangePassword && !isSelf && !isPreviewMode && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={resendingUid === u.uid}
+                              onClick={() => handleResendWelcomeEmail(u)}
+                              title={tr(
+                                'Issue a new temporary password and e-mail it to this member again.',
+                                'Générer un nouveau mot de passe temporaire et le renvoyer par e-mail à ce membre.'
+                              )}
+                            >
+                              <MailCheck
+                                className={`w-3.5 h-3.5 ${
+                                  resendingUid === u.uid ? 'animate-pulse text-slate-400' : 'text-teal-600'
+                                }`}
+                              />
+                              <span className="ml-1.5">
+                                {resendingUid === u.uid
+                                  ? tr('Sending…', 'Envoi…')
+                                  : tr('Resend invite', "Renvoyer l'invitation")}
+                              </span>
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="secondary"
@@ -616,16 +660,29 @@ export const UserManagementView: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-md max-w-md w-full p-6 space-y-4 shadow-lg">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <h3 className="text-base font-semibold text-slate-900">
-                {tr('Account Created', 'Compte créé')}
+                {credentialsReason === 'resent'
+                  ? tr('Invitation Re-sent', 'Invitation renvoyée')
+                  : tr('Account Created', 'Compte créé')}
               </h3>
               <button
                 type="button"
-                onClick={() => setProvisionedAccount(null)}
+                onClick={() => {
+                  setProvisionedAccount(null);
+                  setCredentialsReason('created');
+                }}
                 className="text-slate-400 hover:text-slate-700 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
+            {credentialsReason === 'resent' && (
+              <p className="text-[11px] text-slate-600">
+                {tr(
+                  'A new temporary password was issued for this member — the previous one no longer works. They must still choose a personal password on first login.',
+                  "Un nouveau mot de passe temporaire a été généré pour ce membre — l'ancien ne fonctionne plus. Il devra toujours choisir un mot de passe personnel à sa première connexion."
+                )}
+              </p>
+            )}
             <div className="flex items-start gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-md">
               <MailCheck className="w-4 h-4 text-emerald-600 mt-0.5" />
               <p className="text-[11px] text-emerald-900">
@@ -693,7 +750,13 @@ export const UserManagementView: React.FC = () => {
               </p>
             </div>
             <div className="flex justify-end pt-1">
-              <Button variant="primary" onClick={() => setProvisionedAccount(null)}>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setProvisionedAccount(null);
+                  setCredentialsReason('created');
+                }}
+              >
                 {tr('Done', 'Terminé')}
               </Button>
             </div>

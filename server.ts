@@ -228,17 +228,22 @@ function originAllowed(origin: string | undefined, requestHost: string | undefin
  *   1. Resend HTTP API  — RESEND_API_KEY (plain HTTP, no SDK dependency).
  *   2. SMTP (nodemailer) — SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
  *
+ * MAIL_TRANSPORT forces one of them ('smtp' or 'resend') when both happen to be
+ * configured; without it Resend wins whenever RESEND_API_KEY is present.
+ *
  * MAIL_FROM overrides the sender identity for both. Note that Resend's shared
  * onboarding@resend.dev sender only delivers to the Resend account's own
  * address; an arbitrary recipient requires a verified domain (resend.com/domains)
- * and a MAIL_FROM using it.
+ * and a MAIL_FROM using it. Gmail SMTP (smtp.gmail.com + App Password) has no
+ * such restriction.
  * ========================================================================== */
 const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim();
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+const MAIL_TRANSPORT_PREFERENCE = (process.env.MAIL_TRANSPORT || '').trim().toLowerCase();
 
 let mailer: Transporter | null = null;
 try {
-  if (!RESEND_API_KEY && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     mailer = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
@@ -260,13 +265,22 @@ try {
 type MailTransport = 'resend' | 'smtp' | 'none';
 
 function mailTransport(): MailTransport {
+  if (MAIL_TRANSPORT_PREFERENCE === 'smtp' && mailer) return 'smtp';
+  if (MAIL_TRANSPORT_PREFERENCE === 'resend' && RESEND_API_KEY) return 'resend';
   if (RESEND_API_KEY) return 'resend';
   if (mailer) return 'smtp';
   return 'none';
 }
 
 function mailFrom(): string {
-  return process.env.MAIL_FROM || 'LCSCO Inventory <onboarding@resend.dev>';
+  const configured = (process.env.MAIL_FROM || '').trim();
+  if (configured) return configured;
+  // Sensible default per transport: SMTP must send as the authenticated
+  // mailbox, Resend falls back to its shared test sender.
+  if (mailTransport() === 'smtp' && process.env.SMTP_USER) {
+    return `LCSCO Inventory <${process.env.SMTP_USER}>`;
+  }
+  return 'LCSCO Inventory <onboarding@resend.dev>';
 }
 
 if (mailTransport() === 'none') {
@@ -275,7 +289,7 @@ if (mailTransport() === 'none') {
       'Welcome emails will be skipped; the temporary password is returned to the Director instead.'
   );
 } else {
-  console.log(`[Mailer] transport: ${mailTransport()}`);
+  console.log(`[Mailer] transport: ${mailTransport()}${MAIL_TRANSPORT_PREFERENCE ? ` (MAIL_TRANSPORT=${MAIL_TRANSPORT_PREFERENCE})` : ''}`);
 }
 
 interface OutgoingMail {
@@ -298,7 +312,8 @@ interface MailResult {
  */
 async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
   const from = mailFrom();
-  if (RESEND_API_KEY) {
+  const transport = mailTransport();
+  if (transport === 'resend') {
     try {
       const response = await fetch(RESEND_ENDPOINT, {
         method: 'POST',
@@ -335,7 +350,7 @@ async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
       return { sent: false, error: `Resend: ${reason.slice(0, 300)}` };
     }
   }
-  if (mailer) {
+  if (transport === 'smtp' && mailer) {
     try {
       await mailer.sendMail({
         from,
@@ -789,6 +804,82 @@ CRITICAL FORMATTING RULES:
       } catch (err: any) {
         console.error('[complete-password-change] failed', { ip: req.ip, message: err?.message });
         res.status(500).json({ error: 'Failed to record the password change.' });
+      }
+    }
+  );
+
+  /**
+   * Re-sends the welcome email with a FRESH temporary password.
+   *
+   * Only ever acts on members who have not completed their first login
+   * (`mustChangePassword === true`): for anyone else a password reset is a
+   * deliberate console operation, never a one-click action here. The previous
+   * temporary password is not recoverable by design, so a new one is issued.
+   */
+  app.post(
+    '/api/admin/resend-welcome',
+    globalLimiter,
+    adminActionLimiter,
+    requireAuth,
+    requireRole('ADMIN'),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+          return;
+        }
+        const { targetUid } = req.body || {};
+        if (typeof targetUid !== 'string' || !targetUid || targetUid.length > 128) {
+          res.status(400).json({ error: 'targetUid is required.' });
+          return;
+        }
+
+        const profileRef = getAdminFirestore().doc(`users/${targetUid}`);
+        const profileSnap = await profileRef.get();
+        if (!profileSnap.exists) {
+          res.status(404).json({ error: 'No profile exists for that account.' });
+          return;
+        }
+        const profileData = profileSnap.data() as { email?: string; mustChangePassword?: boolean };
+        if (profileData.mustChangePassword !== true) {
+          res.status(409).json({
+            error:
+              'This member already completed their first login. Their password can only be reset from the Firebase console.',
+          });
+          return;
+        }
+
+        // The Auth record is the source of truth for the sign-in address.
+        const record = await adminAuthInstance.getUser(targetUid).catch(() => null);
+        const email = record?.email || profileData.email || '';
+        if (!email) {
+          res.status(404).json({ error: 'That account has no email address.' });
+          return;
+        }
+
+        const tempPassword = generateTemporaryPassword();
+        await adminAuthInstance.updateUser(targetUid, { password: tempPassword, emailVerified: true });
+        await profileRef.set({ mustChangePassword: true }, { merge: true });
+
+        const mailResult = await sendWelcomeEmail(
+          email,
+          tempPassword,
+          `${req.protocol}://${req.get('host')}`
+        );
+        console.log(
+          `[resend-welcome] ${email} re-issued by ${req.user?.email}. emailSent=${mailResult.sent}` +
+            (mailResult.error ? ` reason=${mailResult.error}` : '')
+        );
+        res.json({
+          uid: targetUid,
+          email,
+          tempPassword,
+          emailSent: mailResult.sent,
+          emailError: mailResult.error,
+        });
+      } catch (err: any) {
+        console.error('[resend-welcome] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to re-send the welcome email.' });
       }
     }
   );
