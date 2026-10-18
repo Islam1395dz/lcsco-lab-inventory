@@ -1,11 +1,10 @@
-
 {
   "projectId": "lcsco-lab-inventory",
-  "appId": "1:848718428578:web:d644272753cd7d47d5dafb",
-  "apiKey": "AIzaSyA6O0kSrq2YI55bcoWsvi9vA7MspTPbwKE",
+  "appId": "1:848718428578:web:0f9a7137fcd7a76cd5dafb",
+  "apiKey": "AIzaSyA6O0kSrq2YI55BcoWsvi9vA7MspTPbwKE",
   "authDomain": "lcsco-lab-inventory.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
   "storageBucket": "lcsco-lab-inventory.firebasestorage.app",
   "messagingSenderId": "848718428578",
-  "measurementId": "G-HV79SZFWQZ"
+  "measurementId": "G-FRL53YLQQP"
 }
