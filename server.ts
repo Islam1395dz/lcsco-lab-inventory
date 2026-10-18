@@ -37,6 +37,7 @@ import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
 let adminAuthInstance: AdminAuth | null = null;
+let adminInitError: string | null = null;
 try {
   // On Render (and other PaaS) a full service-account JSON key can be pasted
   // into the FIREBASE_SERVICE_ACCOUNT_JSON env var. Otherwise we fall back to
@@ -47,6 +48,7 @@ try {
   const app: AdminApp = initializeAdminApp({ credential });
   adminAuthInstance = getAdminAuth(app);
 } catch (err) {
+  adminInitError = err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160);
   console.error(
     '[Auth] Firebase Admin SDK unavailable (no Application Default Credentials). ' +
       'All privileged API endpoints will reject requests.',
@@ -139,7 +141,16 @@ export const requireAuth = async (
     }
     req.user = user;
     next();
-  } catch {
+  } catch (err) {
+    if (!adminAuthInstance) {
+      // Distinct status so operators can tell "server not configured" apart
+      // from "the caller's token is bad".
+      res.status(503).json({
+        error: 'Authentication service is not configured on the server.',
+      });
+      return;
+    }
+    console.error('[Auth] Token verification failed:', err instanceof Error ? err.message : err);
     res.status(401).json({ error: 'Invalid or expired authentication token.' });
   }
 };
@@ -335,7 +346,16 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
 
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'LCSCO Inventory' });
+    res.json({
+      status: 'ok',
+      service: 'LCSCO Inventory',
+      // Non-sensitive operator diagnostics: lets the Director confirm at a
+      // glance whether privileged endpoints can work.
+      admin: adminAuthInstance ? 'ready' : 'unavailable',
+      adminError: adminAuthInstance ? null : adminInitError,
+      mail: mailer ? 'ready' : 'unavailable',
+      origins: (process.env.APP_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
+    });
   });
 
   /**
