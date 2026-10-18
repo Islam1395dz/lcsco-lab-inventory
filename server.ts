@@ -175,19 +175,24 @@ function getGeminiClient(): GoogleGenAI | null {
  * Allowed cross-origin callers. Defaults to same-origin only; add hosts via
  * APP_URL (comma separated) when the API is consumed from another origin.
  * ========================================================================== */
-function originAllowed(origin: string | undefined): boolean {
+function originAllowed(origin: string | undefined, requestHost: string | undefined): boolean {
   if (!origin) return true; // same-origin / curl / mobile app
+  const clean = origin.replace(/\/$/, '');
+  // Same-origin is always allowed: a request whose Origin host equals the Host
+  // this server is serving cannot be cross-site. This removes deployment-order
+  // dependence on APP_URL for the app's own API calls.
+  if (requestHost) {
+    try {
+      if (new URL(clean).host === requestHost) return true;
+    } catch {
+      return false;
+    }
+  }
   const allowed = (process.env.APP_URL || '')
     .split(',')
     .map((s) => s.trim().replace(/\/$/, ''))
     .filter(Boolean);
-  const clean = origin.replace(/\/$/, '');
-  if (allowed.includes(clean)) return true;
-  try {
-    return new URL(clean).host === new URL(`http://${process.env.HOST || 'localhost'}`).host;
-  } catch {
-    return false;
-  }
+  return allowed.includes(clean);
 }
 
 /* ============================================================================
@@ -292,7 +297,7 @@ async function startServer() {
     })
   );
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api') && !originAllowed(req.headers.origin)) {
+    if (req.path.startsWith('/api') && !originAllowed(req.headers.origin, req.headers.host)) {
       res.status(403).json({ error: 'Cross-origin request rejected.' });
       return;
     }
