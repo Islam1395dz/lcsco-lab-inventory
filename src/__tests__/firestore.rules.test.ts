@@ -54,13 +54,21 @@ describe('Firestore Security Rules — security invariants present in rules sour
     expect(block).not.toMatch(/allow (get|list): if isSignedIn\(\)\s*;/);
   });
 
-  it('forbids client-supplied credentials on the users collection', () => {
+  it('keeps the mustChangePassword flag server-managed (validated but never client-writable)', () => {
     const block = rulesContent.slice(
       rulesContent.indexOf('match /users/{uid}'),
       rulesContent.indexOf('match /laboratories/{labId}')
     );
     expect(block).not.toContain("hasOnly(['fullName', 'lastLogin', 'laboratoryIds', 'avatarUrl', 'password'");
-    expect(block).not.toContain("'mustChangePassword'");
+    // The flag is accepted by schema validation so login-time writes still pass,
+    // but it must never appear in an owner or admin update allowlist.
+    const validationLine = rulesContent.split('\n').filter((l) => l.includes("hasOnly(['uid'"));
+    expect(validationLine.length).toBe(1);
+    expect(validationLine[0]).toContain("'mustChangePassword'");
+    // Every restricted-update allowlist in the users update block must exclude the flag.
+    const allowlists = block.match(/affectedKeys\(\)\.hasOnly\(\[[^\]]*\]\)/g) || [];
+    expect(allowlists.length).toBeGreaterThan(0);
+    allowlists.forEach((entry) => expect(entry).not.toContain('mustChangePassword'));
   });
 
   it('prevents any authenticated user from self-creating a profile with a privileged role', () => {

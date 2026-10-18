@@ -143,6 +143,33 @@ npm run emulators    # firebase emulators:exec --rules=firestore.rules + vitest
 4. **API keys**: `GEMINI_API_KEY` is server-only (`getGeminiClient` in `server.ts`);
    the committed `firebase-applet-config.json` holds the app's *public* Firebase web
    config (safe by design), while Firestore itself remains the authorization boundary.
-5. **Server auth requires credentials**: set `GOOGLE_APPLICATION_CREDENTIALS`; without
-   it the Admin SDK cannot verify tokens and `/api/inventory/import-document` fails
-   closed with 401/503.
+5. **Server auth requires credentials**: set `FIREBASE_SERVICE_ACCOUNT_JSON` (a service
+   account JSON pasted as an env var — preferred on Render) or `GOOGLE_APPLICATION_CREDENTIALS`;
+   without credentials the Admin SDK cannot verify tokens and every privileged endpoint
+   (`/api/inventory/import-document`, `/api/admin/*`) fails closed with 401/503.
+
+### Director-controlled account provisioning (server-side)
+
+Account lifecycle is additionally controlled through Admin-SDK endpoints (auth-gated,
+`requireAuth` + `requireRole('ADMIN')`, rate-limited) in `server.ts`:
+
+- `POST /api/admin/create-user` — creates the Firebase Auth account with a
+  **server-generated random temporary password**, writes the profile document,
+  and emails a welcome message (username + temporary password + a notice that
+  the password must be replaced at first login) via SMTP. The temporary password
+  is returned **once** to the Director as a fallback; it is never persisted.
+- `POST /api/admin/delete-user` — deletes the Auth account *and* the profile
+  document together (self-deletion prohibited).
+- `POST /api/admin/complete-password-change` — called with the *user's own* token
+  after they set a personal password client-side (`updatePassword`); clears the
+  server-managed `mustChangePassword` flag on their own profile.
+
+The `mustChangePassword` flag is accepted by the Firestore rules **schema
+validation only** so login-time `lastLogin` writes still pass; it is absent from
+every client update allowlist, so it can never be set or cleared from a browser —
+only the Admin SDK (via the endpoints above) can transition it. It is the modern
+replacement for the removed plaintext temporary-password columns, with the
+temporary secret held in Firebase Auth (not Firestore) and emailed directly to
+the member. NOTE: e-mailing a plaintext password is an acknowledged trade-off
+requested by the Director; the first-login change requirement and single-use
+display contain the exposure window.

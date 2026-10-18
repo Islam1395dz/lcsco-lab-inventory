@@ -351,6 +351,13 @@ export interface UserProfile {
   lastLogin: Timestamp | Date | string;
   avatarUrl?: string;
   isDemoAccount?: boolean;
+  /**
+   * Server-managed flag: set by the provisioning API when the Director creates
+   * an account with a temporary password; cleared only through
+   * POST /api/admin/complete-password-change after the user sets a new one.
+   * Never writable by any client (rules keep it out of every allowlist).
+   */
+  mustChangePassword?: boolean;
 }
 
 export interface Laboratory {

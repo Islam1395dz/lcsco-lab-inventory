@@ -40,6 +40,7 @@ import { UserManagementView } from './components/UserManagementView';
 import { SettingsView } from './components/SettingsView';
 import { CatalogAndAdminView } from './components/CatalogAndAdminView';
 import { AuthenticationPage } from './components/AuthenticationPage';
+import { FirstLoginPasswordGate } from './components/FirstLoginPasswordGate';
 import { NotificationCenter } from './components/NotificationCenter';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LCSCOLogo } from './components/LCSCOLogo';
@@ -236,6 +237,13 @@ const MainShell: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  // First-login onboarding: a freshly provisioned account carries a server-
+  // managed mustChangePassword flag and is held here until a personal password
+  // replaces the Director-issued temporary one.
+  if (profile.mustChangePassword && firebaseUser && !isPreviewMode) {
+    return <FirstLoginPasswordGate />;
   }
 
   const savedAvatar =

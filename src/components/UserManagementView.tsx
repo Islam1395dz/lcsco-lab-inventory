@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import {
+  Check,
+  Copy,
   ExternalLink,
   Lock,
+  MailCheck,
   Plus,
   Trash2,
   X,
@@ -15,6 +18,11 @@ import {
   deleteLabMemberProfile,
   updateUserPermissions,
 } from '../services/inventoryService';
+import {
+  deleteLabMemberAccount,
+  provisionLabMemberAccount,
+  type ProvisionedAccount,
+} from '../services/adminAccountService';
 import { parseDisplayError } from '../firebase';
 import { Button, PageHeader } from './DesignSystem';
 
@@ -43,6 +51,10 @@ export const UserManagementView: React.FC = () => {
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState<UserRole>(UserRole.PHD_STUDENT);
 
+  /** One-time display of the temporary password returned by the provisioning API. */
+  const [provisionedAccount, setProvisionedAccount] = useState<ProvisionedAccount | null>(null);
+  const [copiedTempPassword, setCopiedTempPassword] = useState(false);
+
   const productAggregateStock = React.useMemo(() => {
     const map = new Map<string, number>();
     containers.forEach((c) => {
@@ -67,12 +79,28 @@ export const UserManagementView: React.FC = () => {
         );
       }
 
+      if (!isPreviewMode) {
+        // REAL MODE: the server creates the Firebase Auth account with a
+        // server-generated temporary password, writes the profile doc, and
+        // emails the first-login credentials to the new member.
+        const provisioned = await provisionLabMemberAccount({
+          email: newMemberEmail.trim(),
+          fullName: newMemberName.trim(),
+          role: newMemberRole,
+          laboratoryIds: ['LCSCO'],
+        });
+        setProvisionedAccount(provisioned);
+        setShowAddUserModal(false);
+        setNewMemberName('');
+        setNewMemberEmail('');
+        return;
+      }
+
+      // PREVIEW MODE: no real credentials are involved; the provisional
+      // profile lives in local state only.
       const generatedUid = `LCSCO-${Date.now().toString(36).toUpperCase()}`;
       let createdUid = generatedUid;
 
-      // Credential management belongs to Firebase Authentication: the Director
-      // provisions the profile; the user signs in with their own (resettable)
-      // password or Google identity. No passwords transit through Firestore.
       const actorUid = firebaseUser?.uid || profile.uid;
       try {
         createdUid = await createLabMemberProfile({
@@ -109,8 +137,8 @@ export const UserManagementView: React.FC = () => {
       setFeedback({
         type: 'success',
         message: tr(
-          `Added user ${newMemberName} (${formatRoleLabel(newMemberRole, language)}). They can sign in with their Google account, or with an email/password account you create for them in Firebase Console (Authentication > Users).`,
-          `Utilisateur ${newMemberName} ajouté (${formatRoleLabel(newMemberRole, language)}). Il peut se connecter avec son compte Google, ou avec un compte e-mail/mot de passe que vous créez pour lui dans la console Firebase (Authentication > Users).`
+          `Added preview user ${newMemberName} (${formatRoleLabel(newMemberRole, language)}). Preview users are local-only.`,
+          `Utilisateur d'aperçu ${newMemberName} ajouté (${formatRoleLabel(newMemberRole, language)}). Les comptes d'aperçu sont locaux.`
         ),
       });
       setNewMemberName('');
@@ -133,6 +161,21 @@ export const UserManagementView: React.FC = () => {
             'Impossible de supprimer votre propre profil Directeur actif.'
           )
         );
+      }
+
+      if (!isPreviewMode) {
+        // REAL MODE: this deletes BOTH the Firebase Auth account and the
+        // Firestore profile via the server (a profile-only deletion would
+        // leave an orphaned, still-signable Auth account behind).
+        await deleteLabMemberAccount(targetUser.uid);
+        setFeedback({
+          type: 'success',
+          message: tr(
+            `Deleted account "${targetUser.fullName}" (auth membership and profile).`,
+            `Compte supprimé : « ${targetUser.fullName} » (identité d'authentification et profil).`
+          ),
+        });
+        return;
       }
 
       try {
@@ -349,7 +392,21 @@ export const UserManagementView: React.FC = () => {
                   return (
                     <tr key={u.uid} className="hover:bg-slate-50">
                       <td className="py-3 px-4 font-semibold text-slate-900">
-                        <div>{u.fullName}</div>
+                        <div className="flex items-center gap-2">
+                          <span>{u.fullName}</span>
+                          {u.mustChangePassword && !isSelf && (
+                            <span
+                              className="inline-flex items-center text-[10px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap"
+                              title={tr(
+                                'This member has not completed their first login yet. The temporary password is still pending.',
+                                "Ce membre n'a pas encore terminé sa première connexion. Le mot de passe temporaire est toujours en attente."
+                              )}
+                            >
+                              <Lock className="w-2.5 h-2.5 mr-0.5" />
+                              {tr('Temporary password', 'Mot de passe temporaire')}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-600">
                         {u.email}
@@ -374,8 +431,7 @@ export const UserManagementView: React.FC = () => {
                           className={`inline-flex items-center gap-1.5 text-xs font-medium ${
                             u.status === UserStatus.DEACTIVATED
                               ? 'text-rose-700'
-                              : 'text-emerald-700'
-                          }`}
+                              : 'text-emerald-700'                          }`}
                         >
                           <span className="text-[10px]">●</span>
                           <span>
@@ -530,8 +586,8 @@ export const UserManagementView: React.FC = () => {
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
                 <p className="text-[11px] text-slate-600">
                   {tr(
-                    'After creating the profile, add a Firebase Authentication account for this email (Authentication > Users > Add user), or ask them to sign in with Google. Their password is managed by Firebase and never stored in the inventory database.',
-                    'Après la création du profil, ajoutez un compte Firebase Authentication pour cet e-mail (Authentication > Users > Add user), ou invitez-le à se connecter avec Google. Son mot de passe est géré par Firebase et n’est jamais stocké dans la base d’inventaire.'
+                    'The server creates the full account automatically and emails a welcome message with a temporary password. On first login the member will be required to choose their own personal password.',
+                    'Le serveur crée automatiquement le compte complet et envoie un e-mail de bienvenue contenant un mot de passe temporaire. À sa première connexion, le membre devra choisir son propre mot de passe personnel.'
                   )}
                 </p>
               </div>
@@ -544,10 +600,98 @@ export const UserManagementView: React.FC = () => {
                   {tr('Cancel', 'Annuler')}
                 </Button>
                 <Button type="submit" variant="primary">
-                  {tr('Create Profile', 'Créer le profil')}
+                  {isPreviewMode
+                    ? tr('Create Profile', 'Créer le profil')
+                    : tr('Create Account & Email Credentials', "Créer le compte et envoyer l'e-mail")}
                 </Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ONE-TIME CREDENTIALS MODAL — shown after provisioning succeeds */}
+      {provisionedAccount && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-md max-w-md w-full p-6 space-y-4 shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-semibold text-slate-900">
+                {tr('Account Created', 'Compte créé')}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setProvisionedAccount(null)}
+                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-start gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-md">
+              <MailCheck className="w-4 h-4 text-emerald-600 mt-0.5" />
+              <p className="text-[11px] text-emerald-900">
+                {provisionedAccount.emailSent
+                  ? tr(
+                      `A welcome email was delivered to ${provisionedAccount.email} with their username and temporary password.`,
+                      `Un e-mail de bienvenue a été envoyé à ${provisionedAccount.email} avec son identifiant et son mot de passe temporaire.`
+                    )
+                  : tr(
+                      'Email delivery is not configured on the server yet — copy the temporary password below and send it to the member yourself. They will replace it on first login.',
+                      "L'envoi d'e-mail n'est pas encore configuré sur le serveur — copiez le mot de passe temporaire ci-dessous et transmettez-le au membre. Il sera remplacé à la première connexion."
+                    )}
+              </p>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div>
+                <p className="text-[11px] font-medium text-slate-500 mb-0.5">
+                  {tr('Username (email)', "Identifiant (e-mail)")}
+                </p>
+                <p className="font-mono text-slate-900 px-3 py-2 bg-slate-50 border border-slate-200 rounded-md">
+                  {provisionedAccount.email}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-slate-500 mb-0.5">
+                  {tr('Temporary password', 'Mot de passe temporaire')}
+                </p>
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 font-mono text-slate-900 px-3 py-2 bg-slate-50 border border-slate-200 rounded-md break-all">
+                    {provisionedAccount.tempPassword}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(provisionedAccount.tempPassword);
+                        setCopiedTempPassword(true);
+                        window.setTimeout(() => setCopiedTempPassword(false), 2000);
+                      } catch {
+                        // Clipboard unavailable (permissions) — the value stays visible.
+                      }
+                    }}
+                  >
+                    {copiedTempPassword ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
+              <p className="text-[11px] text-amber-900">
+                {tr(
+                  'This password is shown only once and is never stored. The member must change it at their first login.',
+                  "Ce mot de passe n'est affiché qu'une seule fois et n'est jamais stocké. Le membre devra le changer à sa première connexion."
+                )}
+              </p>
+            </div>
+            <div className="flex justify-end pt-1">
+              <Button variant="primary" onClick={() => setProvisionedAccount(null)}>
+                {tr('Done', 'Terminé')}
+              </Button>
+            </div>
           </div>
         </div>
       )}

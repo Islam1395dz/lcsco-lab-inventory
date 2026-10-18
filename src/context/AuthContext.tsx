@@ -7,6 +7,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signOut as firebaseSignOut,
+  updatePassword,
 } from 'firebase/auth';
 import {
   collection,
@@ -24,6 +25,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, parseDisplayError } from '../firebase';
 import { useLanguage } from './LanguageContext';
+import { completeOnboardingPasswordChange } from '../services/adminAccountService';
 import {
   AppNotification,
   ChemicalContainer,
@@ -144,6 +146,8 @@ interface AuthAndInventoryContextValue {
   clearError: () => void;
   signInWithGoogle: () => Promise<void>;
   signInWithEmailAndPasswordFlow: (email: string, password: string) => Promise<void>;
+  /** First-login completion: set a personal password replacing the Director-issued temporary one. */
+  changeOwnTemporaryPassword: (newPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
   // Real-time Collections
   laboratories: Laboratory[];
@@ -953,6 +957,36 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
   const signInWithEmailAndPasswordFlow = async (email: string, password: string) => {
     await signInWithEmailAndPassword(auth, email.trim(), password);
+  };
+
+  /**
+   * First-login completion: replaces the Director-issued temporary password
+   * with a personal one, then clears the server-managed mustChangePassword
+   * flag on the user's own profile. Firestore's profile listener will observe
+   * the flag (re)moval and release the app from the onboarding gate.
+   */
+  const changeOwnTemporaryPassword = async (newPassword: string) => {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('You must be signed in to change your password.');
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      throw new Error('Your new password must be at least 8 characters long.');
+    }
+    try {
+      await updatePassword(user, newPassword);
+    } catch (err: any) {
+      if (err?.code === 'auth/requires-recent-login' || err?.code === 'auth/weak-password') {
+        if (err?.code === 'auth/weak-password') {
+          throw new Error('Your new password is too weak — use at least 8 characters with letters and numbers.');
+        }
+        throw new Error(
+          'For security your session must be recent to change a password. Please sign out and sign in again, then set your password.'
+        );
+      }
+      throw err;
+    }
+    await completeOnboardingPasswordChange();
   };
 
   const signInWithGoogle = async () => {
@@ -3110,6 +3144,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         clearError: () => setError(null),
         signInWithGoogle,
         signInWithEmailAndPasswordFlow,
+        changeOwnTemporaryPassword,
         signOut,
         laboratories,
         products,

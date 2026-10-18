@@ -20,20 +20,31 @@ const __dirname = path.dirname(__filename);
  * The server refuses privileged API calls when it cannot verify tokens.
  * ========================================================================== */
 import {
+  getAuth as getAdminAuth,
+  type UserRecord,
+} from 'firebase-admin/auth';
+import {
   initializeApp as initializeAdminApp,
   applicationDefault,
+  cert,
   type App as AdminApp,
   type Auth as AdminAuth,
 } from 'firebase-admin/app';
-import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import type { Response, NextFunction, Request } from 'express';
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 
 let adminAuthInstance: AdminAuth | null = null;
 try {
-  const app: AdminApp = initializeAdminApp({
-    credential: applicationDefault(),
-  });
+  // On Render (and other PaaS) a full service-account JSON key can be pasted
+  // into the FIREBASE_SERVICE_ACCOUNT_JSON env var. Otherwise we fall back to
+  // the standard Google Application Default Credentials chain.
+  const credential = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    ? cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON))
+    : applicationDefault();
+  const app: AdminApp = initializeAdminApp({ credential });
   adminAuthInstance = getAdminAuth(app);
 } catch (err) {
   console.error(
@@ -179,6 +190,96 @@ function originAllowed(origin: string | undefined): boolean {
   }
 }
 
+/* ============================================================================
+ * Mailer (nodemailer SMTP)
+ *
+ * Used to deliver welcome emails with one-time temporary passwords when the
+ * Director provisions a new lab member. Configure via env:
+ *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM
+ * ========================================================================== */
+let mailer: Transporter | null = null;
+try {
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    mailer = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+    void mailer.verify().then(
+      () => console.log('[Mailer] SMTP connection verified.'),
+      (err) => console.warn('[Mailer] SMTP verify failed:', err instanceof Error ? err.message : err)
+    );
+  } else {
+    console.warn(
+      '[Mailer] SMTP not configured (SMTP_HOST/SMTP_USER/SMTP_PASS). ' +
+        'Welcome emails will be skipped; the temporary password is returned to the Director instead.'
+    );
+  }
+} catch (err) {
+  console.warn('[Mailer] initialization failed:', err instanceof Error ? err.message : err);
+}
+
+/* ============================================================================
+ * Director-controlled account provisioning
+ * ========================================================================== */
+const ASSIGNABLE_ROLES = ['ADMIN', 'PROFESSOR', 'TECHNICIAN', 'PHD_STUDENT', 'STUDENT_RESEARCHER'];
+
+/** Length-safe random temp password, no ambiguous characters (0/O, 1/l/I). */
+function generateTemporaryPassword(length = 14): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%&*-+=?';
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
+async function sendWelcomeEmail(to: string, tempPassword: string): Promise<boolean> {
+  if (!mailer) return false;
+  const appUrl = (process.env.APP_URL || '').split(',')[0]?.replace(/\/$/, '') || 'https://lcsco-lab-inventory.onrender.com';
+  try {
+    await mailer.sendMail({
+      from: process.env.MAIL_FROM || 'LCSCO Inventory <no-reply@lcsco.dz>',
+      to,
+      subject: 'Your LCSCO Inventory account — first login',
+      text:
+        `Welcome to LCSCO Inventory (Laboratoire de Catalyse et Synthèse en Chimie Organique).\n\n` +
+        `Your account has been created by the Laboratory Director.\n\n` +
+        `Username (email): ${to}\n` +
+        `Temporary password: ${tempPassword}\n\n` +
+        `Sign in at: ${appUrl}\n\n` +
+        `IMPORTANT — SECURITY: you will be required to choose your own personal\n` +
+        `password on your first login. This temporary password stops working as\n` +
+        `soon as you complete that first-login change.\n\n` +
+        `If you did not expect this email, contact the Laboratory Director.`,
+      html:
+        `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;">
+          <h2 style="color:#1B8A2A;">Welcome to LCSCO Inventory</h2>
+          <p>Welcome to the <b>Laboratoire de Catalyse et Synthèse en Chimie Organique</b> chemical inventory system.</p>
+          <p>Your account has been created by the Laboratory Director:</p>
+          <table style="border-collapse:collapse;background:#F8FAFC;border:1px solid #CBD5E1;border-radius:6px;">
+            <tr><td style="padding:8px 14px;font-weight:bold;">Username (email)</td><td style="padding:8px 14px;font-family:monospace;">${to}</td></tr>
+            <tr><td style="padding:8px 14px;font-weight:bold;">Temporary password</td><td style="padding:8px 14px;font-family:monospace;">${tempPassword}</td></tr>
+          </table>
+          <p style="margin-top:16px;">
+            <a href="${appUrl}" style="background:#1B8A2A;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;">Sign in to LCSCO Inventory</a>
+          </p>
+          <p style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;font-size:13px;">
+            <b>Security:</b> on your first login you will be required to choose your own personal password. This temporary password stops working as soon as you complete that first-login change.
+          </p>
+          <p style="font-size:12px;color:#64748B;">If you did not expect this email, contact the Laboratory Director.</p>
+        </div>`,
+    });
+    return true;
+  } catch (err) {
+    console.warn('[Mailer] send failed:', err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
@@ -213,6 +314,16 @@ async function startServer() {
     legacyHeaders: false,
     message: {
       error: 'Too many inventory document imports. Please try again in 15 minutes.',
+    },
+  });
+
+  const adminActionLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: {
+      error: 'Too many account-management actions. Please try again in 15 minutes.',
     },
   });
 
@@ -374,6 +485,155 @@ CRITICAL FORMATTING RULES:
         res.status(500).json({
           error: 'Failed to parse inventory document.',
         });
+      }
+    }
+  );
+
+  /* ==========================================================================
+   * Director-controlled account provisioning (requires ADMIN role)
+   *
+   * The Admin SDK bypasses Firestore security rules, so these endpoints are
+   * the ONLY supported way to create Firebase Auth accounts, delete accounts,
+   * or clear a user's mustChangePassword flag.
+   * ======================================================================== */
+  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+  app.post(
+    '/api/admin/create-user',
+    globalLimiter,
+    adminActionLimiter,
+    requireAuth,
+    requireRole('ADMIN'),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+          return;
+        }
+        const { email, fullName, role, laboratoryIds } = req.body || {};
+        const candidate = String(email || '').trim().toLowerCase();
+        if (!EMAIL_PATTERN.test(candidate) || candidate.length > 254) {
+          res.status(400).json({ error: 'A valid email address is required.' });
+          return;
+        }
+        if (typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 120) {
+          res.status(400).json({ error: 'A full name (2–120 characters) is required.' });
+          return;
+        }
+        if (typeof role !== 'string' || !ASSIGNABLE_ROLES.includes(role)) {
+          res.status(400).json({ error: 'Role must be one of: ' + ASSIGNABLE_ROLES.join(', ') + '.' });
+          return;
+        }
+        const labs = Array.isArray(laboratoryIds) && laboratoryIds.length
+          ? laboratoryIds.filter((l: unknown) => typeof l === 'string' && l.length <= 60).slice(0, 10)
+          : ['LCSCO'];
+
+        // Reject duplicates instead of silently reusing a pre-existing account.
+        try {
+          await adminAuthInstance.getUserByEmail(candidate);
+          res.status(409).json({ error: 'A Firebase account already exists for this email.' });
+          return;
+        } catch {
+          // getUserByEmail throws only when the user is absent — proceed.
+        }
+
+        const tempPassword = generateTemporaryPassword();
+        const record: UserRecord = await adminAuthInstance.createUser({
+          email: candidate,
+          password: tempPassword,
+          displayName: fullName.trim(),
+          emailVerified: false,
+        });
+
+        const profile = {
+          uid: record.uid,
+          email: candidate,
+          fullName: fullName.trim(),
+          role,
+          laboratoryIds: labs,
+          status: 'ACTIVE',
+          mustChangePassword: true,
+          createdAt: new Date(),
+        };
+        await getAdminFirestore().doc(`users/${record.uid}`).set(profile);
+
+        const emailSent = await sendWelcomeEmail(candidate, tempPassword);
+
+        // The temporary password is returned exactly once, to the Director,
+        // so it can be shown in the UI and copied as a fallback. It is never
+        // stored anywhere by this application.
+        console.log(`[create-user] ${candidate} provisioned by ${req.user?.email}. emailSent=${emailSent}`);
+        res.status(201).json({
+          uid: record.uid,
+          email: candidate,
+          tempPassword,
+          emailSent,
+        });
+      } catch (err: any) {
+        const code = err?.code || '';
+        if (code.includes('email-already-exists')) {
+          res.status(409).json({ error: 'A Firebase account already exists for this email.' });
+          return;
+        }
+        console.error('[create-user] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to provision the account.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/delete-user',
+    globalLimiter,
+    adminActionLimiter,
+    requireAuth,
+    requireRole('ADMIN'),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+          return;
+        }
+        const { targetUid } = req.body || {};
+        if (typeof targetUid !== 'string' || !targetUid || targetUid.length > 128) {
+          res.status(400).json({ error: 'targetUid is required.' });
+          return;
+        }
+        if (targetUid === req.user?.uid) {
+          res.status(400).json({ error: 'Directors cannot delete their own account.' });
+          return;
+        }
+        try {
+          await adminAuthInstance.getUser(targetUid);
+        } catch {
+          // Auth account already gone; still clean up any profile remnant.
+        }
+        await adminAuthInstance.deleteUser(targetUid).catch(() => undefined);
+        await getAdminFirestore().doc(`users/${targetUid}`).delete().catch(() => undefined);
+        console.log(`[delete-user] ${targetUid} deleted by ${req.user?.email}`);
+        res.json({ success: true, uid: targetUid });
+      } catch (err: any) {
+        console.error('[delete-user] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to delete the account.' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/admin/complete-password-change',
+    globalLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        // Acts ONLY on the caller's own account — the uid always comes from the
+        // verified ID token, never from the request body.
+        await getAdminFirestore().doc(`users/${req.user?.uid}`).set(
+          { mustChangePassword: false },
+          { merge: true }
+        );
+        res.json({ success: true });
+      } catch (err: any) {
+        console.error('[complete-password-change] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to record the password change.' });
       }
     }
   );

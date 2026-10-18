@@ -116,13 +116,16 @@ service cloud.firestore {
     }
 
     // NOTE:
-    //  - Credentials (password / mustChangePassword) are NO LONGER part of this
-    //    schema. Accounts and password resets are owned by Firebase Auth.
+    //  - Passwords are owned by Firebase Auth. `mustChangePassword` is a
+    //    management flag written ONLY by the server (Admin SDK bypasses rules);
+    //    it is accepted here so that client login-time updates (lastLogin)
+    //    still validate, but it is NOT in any client allowlist, so it can
+    //    never be set or cleared from the browser.
     //  - The remaining personal data (fullName, email, role, laboratoryIds) is
     //    minimum required for role-based notification routing and audit logs.
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'fullName', 'email', 'role', 'laboratoryIds', 'status', 'createdAt', 'lastLogin']) &&
-        data.keys().hasOnly(['uid', 'fullName', 'email', 'role', 'laboratoryIds', 'status', 'createdAt', 'lastLogin', 'isDemoAccount', 'avatarUrl']) &&
+        data.keys().hasOnly(['uid', 'fullName', 'email', 'role', 'laboratoryIds', 'status', 'createdAt', 'lastLogin', 'isDemoAccount', 'avatarUrl', 'mustChangePassword']) &&
         isValidId(data.uid) &&
         data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
@@ -137,7 +140,8 @@ service cloud.firestore {
         data.laboratoryIds is list && data.laboratoryIds.size() <= 20 &&
         (data.laboratoryIds.size() == 0 || (data.laboratoryIds[0] is string && data.laboratoryIds[0].size() <= 128)) &&
         data.status is string && (data.status == 'ACTIVE' || data.status == 'PENDING' || data.status == 'DEACTIVATED') &&
-        (!('isDemoAccount' in data) || data.isDemoAccount is bool);
+        (!('isDemoAccount' in data) || data.isDemoAccount is bool) &&
+        (!('mustChangePassword' in data) || data.mustChangePassword is bool);
     }
 
     function isValidLaboratory(data) {
