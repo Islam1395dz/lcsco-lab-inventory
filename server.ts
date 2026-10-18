@@ -226,19 +226,27 @@ function originAllowed(origin: string | undefined, requestHost: string | undefin
  * Director provisions a new lab member. Two transports, in priority order:
  *
  *   1. Resend HTTP API  — RESEND_API_KEY (plain HTTP, no SDK dependency).
- *   2. SMTP (nodemailer) — SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
+ *   2. Brevo HTTP API   — BREVO_API_KEY (plain HTTP, no SDK dependency).
+ *   3. SMTP (nodemailer) — SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
  *
- * MAIL_TRANSPORT forces one of them ('smtp' or 'resend') when both happen to be
- * configured; without it Resend wins whenever RESEND_API_KEY is present.
+ * The HTTP transports matter on hosts that block outbound SMTP: Render's Free
+ * instances cannot reach ports 25/465/587 at all ("Free web services can't send
+ * outbound network traffic on ports 25, 465, or 587"), so every SMTP send dies
+ * with a connection timeout there while HTTPS (443) works normally.
  *
- * MAIL_FROM overrides the sender identity for both. Note that Resend's shared
- * onboarding@resend.dev sender only delivers to the Resend account's own
- * address; an arbitrary recipient requires a verified domain (resend.com/domains)
- * and a MAIL_FROM using it. Gmail SMTP (smtp.gmail.com + App Password) has no
- * such restriction.
+ * MAIL_TRANSPORT forces one of them ('smtp', 'resend' or 'brevo') when several
+ * happen to be configured; without it Resend wins, then Brevo, then SMTP.
+ *
+ * MAIL_FROM overrides the sender identity. Both HTTP providers require the
+ * sender to be validated in their dashboard (Resend: a domain at
+ * resend.com/domains, which also lifts its send-only-to-yourself restriction;
+ * Brevo: a verified sender address, no domain needed). Gmail SMTP has no such
+ * restriction but is unreachable from the Render Free plan.
  * ========================================================================== */
 const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim();
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim();
+const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
 const MAIL_TRANSPORT_PREFERENCE = (process.env.MAIL_TRANSPORT || '').trim().toLowerCase();
 
 let mailer: Transporter | null = null;
@@ -262,30 +270,39 @@ try {
   console.warn('[Mailer] initialization failed:', err instanceof Error ? err.message : err);
 }
 
-type MailTransport = 'resend' | 'smtp' | 'none';
+type MailTransport = 'resend' | 'brevo' | 'smtp' | 'none';
 
 function mailTransport(): MailTransport {
   if (MAIL_TRANSPORT_PREFERENCE === 'smtp' && mailer) return 'smtp';
   if (MAIL_TRANSPORT_PREFERENCE === 'resend' && RESEND_API_KEY) return 'resend';
+  if (MAIL_TRANSPORT_PREFERENCE === 'brevo' && BREVO_API_KEY) return 'brevo';
   if (RESEND_API_KEY) return 'resend';
+  if (BREVO_API_KEY) return 'brevo';
   if (mailer) return 'smtp';
   return 'none';
 }
 
+/** Splits `Name <address>` (or a bare address) into the shape HTTP APIs expect. */
+function parseSender(from: string): { name?: string; email: string } {
+  const match = from.match(/^\s*(.*?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (match) return { name: match[1] || undefined, email: match[2].trim() };
+  return { email: from.trim() };
+}
+
 function mailFrom(): string {
   const configured = (process.env.MAIL_FROM || '').trim();
-  if (configured) return configured;
-  // Sensible default per transport: SMTP must send as the authenticated
-  // mailbox, Resend falls back to its shared test sender.
-  if (mailTransport() === 'smtp' && process.env.SMTP_USER) {
-    return `LCSCO Inventory <${process.env.SMTP_USER}>`;
-  }
-  return 'LCSCO Inventory <onboarding@resend.dev>';
+  const transport = mailTransport();
+  // Resend's shared test sender is only meaningful on Resend itself.
+  if (configured && (transport === 'resend' || !/@resend\.dev/i.test(configured))) return configured;
+  // Otherwise fall back to the mailbox identity the operator authenticated with.
+  const authenticated = (process.env.SMTP_USER || '').trim();
+  if (transport !== 'resend' && authenticated) return `LCSCO Inventory <${authenticated}>`;
+  return configured || 'LCSCO Inventory <onboarding@resend.dev>';
 }
 
 if (mailTransport() === 'none') {
   console.warn(
-    '[Mailer] No mail transport configured (RESEND_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS). ' +
+    '[Mailer] No mail transport configured (RESEND_API_KEY, BREVO_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS). ' +
       'Welcome emails will be skipped; the temporary password is returned to the Director instead.'
   );
 } else {
@@ -348,6 +365,45 @@ async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
       const reason = err instanceof Error ? err.message : String(err);
       console.warn('[Mailer] Resend send failed:', reason);
       return { sent: false, error: `Resend: ${reason.slice(0, 300)}` };
+    }
+  }
+  if (transport === 'brevo') {
+    try {
+      const sender = parseSender(from);
+      const response = await fetch(BREVO_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'api-key': BREVO_API_KEY,
+          'Content-Type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify({
+          sender,
+          to: [{ email: mail.to }],
+          subject: mail.subject,
+          textContent: mail.text,
+          htmlContent: mail.html,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        let reason = `Brevo rejected the message (HTTP ${response.status}).`;
+        try {
+          const parsed = JSON.parse(detail);
+          if (parsed && typeof parsed.message === 'string' && parsed.message.trim()) {
+            reason = `Brevo: ${parsed.message.trim().slice(0, 300)}`;
+          }
+        } catch {
+          // Non-JSON body; keep the generic reason above.
+        }
+        console.warn('[Mailer] Brevo rejected the message:', response.status, detail.slice(0, 300));
+        return { sent: false, error: reason };
+      }
+      return { sent: true };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn('[Mailer] Brevo send failed:', reason);
+      return { sent: false, error: `Brevo: ${reason.slice(0, 300)}` };
     }
   }
   if (transport === 'smtp' && mailer) {
