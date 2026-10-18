@@ -253,9 +253,14 @@ function generateTemporaryPassword(length = 14): string {
   return out;
 }
 
-async function sendWelcomeEmail(to: string, tempPassword: string): Promise<boolean> {
+async function sendWelcomeEmail(to: string, tempPassword: string, requestBaseUrl?: string): Promise<boolean> {
   if (!mailer) return false;
-  const appUrl = (process.env.APP_URL || '').split(',')[0]?.replace(/\/$/, '') || 'https://lcsco-lab-inventory.onrender.com';
+  // Prefer the host the Director is actually using, then APP_URL, so the link
+  // keeps working if the service is ever renamed or moved.
+  const appUrl =
+    (requestBaseUrl && requestBaseUrl.replace(/\/$/, '')) ||
+    (process.env.APP_URL || '').split(',')[0]?.trim().replace(/\/$/, '') ||
+    'https://lcsco-lab-inventory.onrender.com';
   try {
     await mailer.sendMail({
       from: process.env.MAIL_FROM || 'LCSCO Inventory <no-reply@lcsco.dz>',
@@ -582,7 +587,8 @@ CRITICAL FORMATTING RULES:
         };
         await getAdminFirestore().doc(`users/${record.uid}`).set(profile);
 
-        const emailSent = await sendWelcomeEmail(candidate, tempPassword);
+        const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
+        const emailSent = await sendWelcomeEmail(candidate, tempPassword, requestBaseUrl);
 
         // The temporary password is returned exactly once, to the Director,
         // so it can be shown in the UI and copied as a fallback. It is never
