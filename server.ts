@@ -586,7 +586,11 @@ CRITICAL FORMATTING RULES:
           email: candidate,
           password: tempPassword,
           displayName: fullName.trim(),
-          emailVerified: false,
+          // Accounts only exist because the Director created them for a known
+          // member, and the security rules require a verified address for
+          // writes. Without this the member would sign in but be unable to
+          // record anything (and there is no self-service signup to police).
+          emailVerified: true,
         });
 
         const profile = {
