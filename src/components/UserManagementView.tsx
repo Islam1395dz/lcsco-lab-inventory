@@ -635,9 +635,14 @@ export const UserManagementView: React.FC = () => {
                       `Un e-mail de bienvenue a été envoyé à ${provisionedAccount.email} avec son identifiant et son mot de passe temporaire.`
                     )
                   : tr(
-                      'Email delivery is not configured on the server yet — copy the temporary password below and send it to the member yourself. They will replace it on first login.',
-                      "L'envoi d'e-mail n'est pas encore configuré sur le serveur — copiez le mot de passe temporaire ci-dessous et transmettez-le au membre. Il sera remplacé à la première connexion."
+                      'The welcome email could not be delivered — copy the temporary password below and send it to the member yourself. They will replace it on first login.',
+                      "L'e-mail de bienvenue n'a pas pu être envoyé — copiez le mot de passe temporaire ci-dessous et transmettez-le au membre. Il sera remplacé à la première connexion."
                     )}
+                {!provisionedAccount.emailSent && provisionedAccount.emailError ? (
+                  <span className="block mt-1 font-mono break-all opacity-80">
+                    {provisionedAccount.emailError}
+                  </span>
+                ) : null}
               </p>
             </div>
             <div className="space-y-2 text-xs">

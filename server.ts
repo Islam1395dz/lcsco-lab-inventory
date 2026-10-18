@@ -285,12 +285,18 @@ interface OutgoingMail {
   html: string;
 }
 
+interface MailResult {
+  sent: boolean;
+  /** Provider-side reason when delivery failed, safe to show to the Director. */
+  error?: string;
+}
+
 /**
  * Sends one message and never throws: account provisioning must succeed even
  * when the mail provider is down (the Director still sees the temporary
  * password and can pass it on).
  */
-async function deliverMail(mail: OutgoingMail): Promise<boolean> {
+async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
   const from = mailFrom();
   if (RESEND_API_KEY) {
     try {
@@ -310,13 +316,23 @@ async function deliverMail(mail: OutgoingMail): Promise<boolean> {
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
+        let reason = `Resend rejected the message (HTTP ${response.status}).`;
+        try {
+          const parsed = JSON.parse(detail);
+          if (parsed && typeof parsed.message === 'string' && parsed.message.trim()) {
+            reason = `Resend: ${parsed.message.trim().slice(0, 300)}`;
+          }
+        } catch {
+          // Non-JSON body; keep the generic reason above.
+        }
         console.warn('[Mailer] Resend rejected the message:', response.status, detail.slice(0, 300));
-        return false;
+        return { sent: false, error: reason };
       }
-      return true;
+      return { sent: true };
     } catch (err) {
-      console.warn('[Mailer] Resend send failed:', err instanceof Error ? err.message : err);
-      return false;
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn('[Mailer] Resend send failed:', reason);
+      return { sent: false, error: `Resend: ${reason.slice(0, 300)}` };
     }
   }
   if (mailer) {
@@ -328,13 +344,14 @@ async function deliverMail(mail: OutgoingMail): Promise<boolean> {
         text: mail.text,
         html: mail.html,
       });
-      return true;
+      return { sent: true };
     } catch (err) {
-      console.warn('[Mailer] SMTP send failed:', err instanceof Error ? err.message : err);
-      return false;
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn('[Mailer] SMTP send failed:', reason);
+      return { sent: false, error: `SMTP: ${reason.slice(0, 300)}` };
     }
   }
-  return false;
+  return { sent: false, error: 'No mail transport is configured on the server.' };
 }
 
 /* ============================================================================
@@ -351,8 +368,14 @@ function generateTemporaryPassword(length = 14): string {
   return out;
 }
 
-async function sendWelcomeEmail(to: string, tempPassword: string, requestBaseUrl?: string): Promise<boolean> {
-  if (mailTransport() === 'none') return false;
+async function sendWelcomeEmail(
+  to: string,
+  tempPassword: string,
+  requestBaseUrl?: string
+): Promise<MailResult> {
+  if (mailTransport() === 'none') {
+    return { sent: false, error: 'No mail transport is configured on the server.' };
+  }
   // Prefer the host the Director is actually using, then APP_URL, so the link
   // keeps working if the service is ever renamed or moved.
   const appUrl =
@@ -685,17 +708,21 @@ CRITICAL FORMATTING RULES:
         await getAdminFirestore().doc(`users/${record.uid}`).set(profile);
 
         const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
-        const emailSent = await sendWelcomeEmail(candidate, tempPassword, requestBaseUrl);
+        const mailResult = await sendWelcomeEmail(candidate, tempPassword, requestBaseUrl);
 
         // The temporary password is returned exactly once, to the Director,
         // so it can be shown in the UI and copied as a fallback. It is never
         // stored anywhere by this application.
-        console.log(`[create-user] ${candidate} provisioned by ${req.user?.email}. emailSent=${emailSent}`);
+        console.log(
+          `[create-user] ${candidate} provisioned by ${req.user?.email}. emailSent=${mailResult.sent}` +
+            (mailResult.error ? ` reason=${mailResult.error}` : '')
+        );
         res.status(201).json({
           uid: record.uid,
           email: candidate,
           tempPassword,
-          emailSent,
+          emailSent: mailResult.sent,
+          emailError: mailResult.error,
         });
       } catch (err: any) {
         const code = err?.code || '';

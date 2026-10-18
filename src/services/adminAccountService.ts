@@ -16,6 +16,8 @@ export interface ProvisionedAccount {
   /** Returned exactly once — shown to the Director as a fallback AND emailed to the new member. */
   tempPassword: string;
   emailSent: boolean;
+  /** Provider-side reason when the welcome email could not be delivered. */
+  emailError?: string;
 }
 
 async function adminApiFetch<T>(path: string, body: unknown): Promise<T> {
