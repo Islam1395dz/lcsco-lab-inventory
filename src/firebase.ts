@@ -45,6 +45,20 @@ export async function testFirestoreConnection(): Promise<void> {
 testFirestoreConnection();
 
 /**
+ * Returns a Firebase ID token for authenticated calls to the Express API
+ * (e.g., POST /api/inventory/import-document), or null when signed out.
+ */
+export async function getApiAuthToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    return await user.getIdToken();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Standardized Firestore Error Handler
  * Wraps permission or operational failures into a structured JSON error payload.
  */

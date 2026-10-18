@@ -350,8 +350,7 @@ export interface UserProfile {
   createdAt: Timestamp | Date | string;
   lastLogin: Timestamp | Date | string;
   avatarUrl?: string;
-  password?: string;
-  mustChangePassword?: boolean;
+  isDemoAccount?: boolean;
 }
 
 export interface Laboratory {

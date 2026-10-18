@@ -1,28 +1,32 @@
 import React, { useState } from 'react';
 import {
-  ArrowRight,
+  AlertCircle,
   Eye,
   EyeOff,
-  KeyRound,
-  Lock,
+  Loader2,
   LogIn,
-  User,
+  Mail,
 } from 'lucide-react';
-import {
-  TEMPORARY_LCSCO_ACCOUNTS,
-  useInventoryContext,
-} from '../context/AuthContext';
+import { useInventoryContext } from '../context/AuthContext';
 import {
   LanguageSwitchButton,
   useLanguage,
 } from '../context/LanguageContext';
-import { formatRoleLabel, formatShortRoleName } from '../utils/formatters';
 import { LCSCOLogo } from './LCSCOLogo';
 
+/**
+ * Sign-in page.
+ *
+ * Authentication is delegated entirely to Firebase Auth:
+ *  - Email / password accounts (verification handled by Firebase)
+ *  - Google accounts
+ *
+ * There is no local, plaintext credential comparison, and no anonymous
+ * sign-in. Roles are granted by an administrator, never chosen at login.
+ */
 export const AuthenticationPage: React.FC = () => {
   const {
-    loginWithTemporaryAccount,
-    allUsers,
+    signInWithEmailAndPasswordFlow,
     signInWithGoogle,
     error,
     clearError,
@@ -30,77 +34,88 @@ export const AuthenticationPage: React.FC = () => {
 
   const { tr } = useLanguage();
 
-  const [usernameOrEmail, setUsernameOrEmail] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
   const [localAuthError, setLocalAuthError] = useState<string | null>(null);
+
+  const displayedError = localAuthError || error;
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalAuthError(null);
+    clearError();
 
-    const trimmedUser = usernameOrEmail.trim().toLowerCase();
-    const isLabEngineerAlias =
-      trimmedUser === 'lab engineer' ||
-      trimmedUser === 'ingénieur labo' ||
-      trimmedUser === 'ingénieur de laboratoire' ||
-      trimmedUser === 'lab.engineer@lcsco.dz' ||
-      trimmedUser === 'technician' ||
-      trimmedUser === 'technicien' ||
-      trimmedUser === 'technician@lcsco.dz';
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = passwordInput;
 
-    const matchedUser =
-      allUsers.find(
-        (u) =>
-          u.fullName.toLowerCase() === trimmedUser ||
-          u.email.toLowerCase() === trimmedUser ||
-          u.uid.toLowerCase() === trimmedUser ||
-          formatRoleLabel(u.role, 'fr').toLowerCase() === trimmedUser ||
-          formatRoleLabel(u.role, 'en').toLowerCase() === trimmedUser ||
-          (isLabEngineerAlias && u.uid === 'temp-technician')
-      ) ||
-      TEMPORARY_LCSCO_ACCOUNTS.find(
-        (acc) =>
-          acc.fullName.toLowerCase() === trimmedUser ||
-          acc.email.toLowerCase() === trimmedUser ||
-          formatRoleLabel(acc.role, 'fr').toLowerCase() === trimmedUser ||
-          formatRoleLabel(acc.role, 'en').toLowerCase() === trimmedUser
-      );
-
-    if (!matchedUser) {
+    if (!cleanEmail || !cleanPassword) {
       setLocalAuthError(
         tr(
-          'Account not found. In trial mode, enter "Director" (password: LCSCO2026) or use an account created by the Director.',
-          'Compte introuvable. En mode essai, entrez « Director » (mot de passe : LCSCO2026) ou utilisez un compte créé par le Directeur.'
+          'Enter both your email address and password.',
+          'Saisissez votre adresse e-mail et votre mot de passe.'
         )
       );
       return;
     }
 
-    const savedCustomPassword = localStorage.getItem(`lcsco_pass_${matchedUser.uid}`);
-    const expectedPassword =
-      savedCustomPassword ||
-      (matchedUser as any).password ||
-      (matchedUser as any).accessCode ||
-      'LCSCO2026';
-
-    const cleanPass = passwordInput.trim();
-    const isDirectorDefaultPass =
-      matchedUser.uid === 'temp-director' &&
-      !savedCustomPassword &&
-      (cleanPass === 'LCSCO2026' || cleanPass === 'LCSCO-2026');
-
-    if (cleanPass !== expectedPassword && !isDirectorDefaultPass) {
-      setLocalAuthError(
-        tr(
-          'Invalid password for this LCSCO account.',
-          'Mot de passe incorrect pour ce compte LCSCO.'
-        )
-      );
-      return;
+    setSubmitting(true);
+    try {
+      await signInWithEmailAndPasswordFlow(cleanEmail, cleanPassword);
+    } catch (err: any) {
+      const code = String(err?.code || '');
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+        setLocalAuthError(
+          tr(
+            'Invalid email or password for this LCSCO account.',
+            'E-mail ou mot de passe invalide pour ce compte LCSCO.'
+          )
+        );
+      } else if (code === 'auth/user-disabled') {
+        setLocalAuthError(
+          tr(
+            'This account has been deactivated. Please contact the Laboratory Director.',
+            'Ce compte a été désactivé. Contactez le Directeur du laboratoire.'
+          )
+        );
+      } else if (code === 'auth/operation-not-allowed') {
+        setLocalAuthError(
+          tr(
+            'Email/Password sign-in is not enabled in Firebase (Authentication > Sign-in method).',
+            'La connexion par e-mail/mot de passe n’est pas activée dans Firebase (Authentication > Sign-in method).'
+          )
+        );
+      } else if (code === 'auth/unauthorized-domain') {
+        setLocalAuthError(
+          tr(
+            'This domain is not yet registered in Firebase (Authentication > Settings > Authorized Domains).',
+            'Ce domaine n’est pas enregistré dans Firebase (Authentication > Settings > Authorized Domains).'
+          )
+        );
+      } else {
+        setLocalAuthError(
+          tr(
+            'Sign-in failed. Please try again.',
+            'Échec de la connexion. Veuillez réessayer.'
+          )
+        );
+      }
+    } finally {
+      setSubmitting(false);
     }
+  };
 
-    await loginWithTemporaryAccount(matchedUser.uid);
+  const handleGoogleLogin = async () => {
+    setLocalAuthError(null);
+    setSubmitting(true);
+    try {
+      await signInWithGoogle();
+    } catch {
+      // Error surfaced through the shared context banner.
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -133,8 +148,8 @@ export const AuthenticationPage: React.FC = () => {
               </h2>
               <p className="text-xs text-slate-500">
                 {tr(
-                  'Enter your laboratory credentials to access the inventory',
-                  'Saisissez vos identifiants pour accéder à l’inventaire'
+                  'Use your laboratory account to access the inventory',
+                  'Utilisez votre compte de laboratoire pour accéder à l’inventaire'
                 )}
               </p>
             </div>
@@ -143,123 +158,133 @@ export const AuthenticationPage: React.FC = () => {
             </span>
           </div>
 
-          {/* Trial Mode Director Account Reminder */}
-          <div className="p-3.5 rounded-lg bg-amber-50/90 border border-amber-200 text-xs text-amber-950 space-y-1.5">
-            <div className="font-semibold text-amber-900 flex items-center gap-1.5">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-              <span>
-                {tr(
-                  'Trial Mode Reminder — Director Account Open',
-                  'Rappel Mode Test — Compte Directeur ouvert'
-                )}
-              </span>
-            </div>
-            <p className="text-[11px] text-amber-800 leading-relaxed">
-              {tr(
-                'Since this application is in trial mode, the Director account is open. Simply enter ',
-                'Comme cette application est en mode test, le compte Directeur est ouvert. Écrivez simplement '
-              )}
-              <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-white border border-amber-200 text-slate-900">
-                Director
-              </span>
-              {tr(' and the password ', ' et le mot de passe ')}
-              <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-white border border-amber-200 text-slate-900">
-                LCSCO2026
-              </span>
-              {tr('.', '.')}
-            </p>
-          </div>
-
-          {(error || localAuthError) && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-900 flex items-center justify-between">
-              <span>{error || localAuthError}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  clearError();
-                  setLocalAuthError(null);
-                }}
-                className="underline font-mono ml-3 cursor-pointer"
-              >
-                {tr('Dismiss', 'Fermer')}
-              </button>
+          {displayedError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-900 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{displayedError}</span>
             </div>
           )}
 
           <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                {tr('Username or Email', 'Nom d’utilisateur ou E-mail')}
+                {tr('Email *', 'E-mail *')}
               </label>
               <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="text"
+                  type="email"
                   required
-                  value={usernameOrEmail}
-                  onChange={(e) => setUsernameOrEmail(e.target.value)}
-                  placeholder={tr(
-                    'Director or your laboratory email',
-                    'Director ou votre e-mail du laboratoire'
-                  )}
-                  className="w-full pl-9 pr-3 py-2.5 font-mono text-xs border border-slate-300 rounded-md focus:outline-none focus:border-[#1B8A2A]"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder={tr('you@lcsco.dz', 'vous@lcsco.dz')}
+                  className="w-full pl-9 pr-3 py-2.5 text-xs border border-slate-300 rounded-md focus:outline-none focus:border-[#1B8A2A]"
                 />
               </div>
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="font-semibold text-slate-700">
-                  {tr('Password', 'Mot de passe')}
-                </label>
-              </div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                {tr('Password *', 'Mot de passe *')}
+              </label>
               <div className="relative">
-                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <LockIcon />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="current-password"
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder={tr('Enter password', 'Entrez le mot de passe')}
+                  placeholder="••••••••"
                   className="w-full pl-9 pr-9 py-2.5 font-mono text-xs border border-slate-300 rounded-md focus:outline-none focus:border-[#1B8A2A]"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  aria-label="Toggle password visibility"
+                  tabIndex={-1}
                 >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
             <button
               type="submit"
-              className="w-full py-2.5 text-sm font-semibold text-white bg-[#1B8A2A] rounded-md hover:bg-emerald-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              disabled={submitting}
+              className="w-full py-2.5 text-xs font-semibold text-white bg-[#1B8A2A] rounded-md hover:bg-emerald-800 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
             >
-              <Lock className="w-4 h-4" />
-              <span>{tr('Log In', 'Se Connecter')}</span>
-              <ArrowRight className="w-4 h-4" />
+              {submitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LogIn className="w-4 h-4" />
+              )}
+              <span>{tr('Sign In to LCSCO Inventory', 'Se connecter à LCSCO Inventaire')}</span>
             </button>
           </form>
 
-          <div className="pt-2 border-t border-slate-200">
-            <button
-              type="button"
-              onClick={signInWithGoogle}
-              className="w-full py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <LogIn className="w-3.5 h-3.5 text-[#1B8A2A]" />
-              <span>{tr('Sign In with Google', 'Continuer avec Google')}</span>
-            </button>
+          <div className="relative py-1 flex items-center justify-center">
+            <span className="absolute inset-x-0 top-1/2 h-px bg-slate-200" />
+            <span className="relative bg-white px-3 text-[10px] font-mono font-semibold text-slate-400">
+              {tr('OR', 'OU')}
+            </span>
           </div>
+
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={submitting}
+            className="w-full py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+          >
+            <GoogleIcon />
+            <span>{tr('Continue with Google', 'Continuer avec Google')}</span>
+          </button>
         </div>
+
+        <p className="text-center text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
+          {tr(
+            'Accounts are provisioned by the Laboratory Director. If you cannot access the inventory, make sure your account is active and your email is verified.',
+            'Les comptes sont provisionnés par le Directeur du laboratoire. Si vous ne pouvez pas accéder à l’inventaire, vérifiez que votre compte est actif et votre e-mail vérifié.'
+          )}
+        </p>
       </div>
     </div>
   );
 };
+
+const LockIcon = () => (
+  <svg
+    className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+
+const GoogleIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      fill="#4285F4"
+      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 23c2.97 0 5.46-.98 7.28-2.65l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H1.07v2.05A11 11 0 0 0 12 23Z"
+    />
+    <path
+      fill="#FBBC05"
+      d="M3.49 13.11A6.6 6.6 0 0 1 3.14 11c0-.73.13-1.44.35-2.11V6.84H1.07a11 11 0 0 0 0 9.89l2.42-1.62Z"
+    />
+    <path
+      fill="#EA4335"
+      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 1.07 6.84l2.42 1.62C4.71 5.9 8.14 5.38 12 5.38Z"
+    />
+  </svg>
+);

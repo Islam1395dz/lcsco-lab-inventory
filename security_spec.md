@@ -49,8 +49,8 @@
    *Expected*: `PERMISSION_DENIED` (PII isolation restricts read to `isOwner(uid) || isAdminOrProf()`).
 
 4. **Payload 4 (Unverified Email Spoofing Bootstrapped Admin)**:
-   Token has `email: "islam.hasnaoui13@gmail.com"` and `email_verified: false`.
-   *Expected*: `PERMISSION_DENIED` (`isVerified()` requires `request.auth.token.email_verified == true`).
+   Token has `email: "director@lcsco.dz"` and `email_verified: false`.
+   *Expected*: `PERMISSION_DENIED` (`isVerified()` requires `request.auth.token.email_verified == true`; `isBootstrappedAdmin()` requires the verified bootstrap claim).
 
 5. **Payload 5 (Shadow Field Injection on Product Create)**:
    ```json
@@ -100,3 +100,49 @@
 12. **Payload 12 (Resource Poisoning — 2KB String in Container ID or Reason)**:
     `transaction` payload with `reason` of length 2000 characters.
     *Expected*: `PERMISSION_DENIED` (`data.reason.size() <= 500` fails).
+
+---
+
+## 3. Implementation Status (October 2026)
+
+All payloads are enforced by `firestore.rules`. Runtime proof runs in
+`scripts/rules.emulator.test.mjs` (Firestore Emulator executes the real rules):
+
+```
+npm run emulators    # firebase emulators:exec --rules=firestore.rules + vitest
+```
+
+### Delivered
+
+| Area | Change |
+| --- | --- |
+| Identity | Firebase Auth only (Google + email/password, **no anonymous**). Bootstrap admin = verified `director@lcsco.dz` (single source; cannot be spoofed with an unverified address). |
+| Roles | Resolved from verified Firebase ID-token custom claims (`request.auth.token.role`), with a migration fallback to the Firestore profile document. Self-assignment of roles (create or update) is impossible for any non-admin. |
+| Credentials | The `password` / `mustChangePassword` profile fields, the `LCSCO-2026` universal code, `lcsco_pass_*` localStorage mirrors, and all client-side password comparison UI are removed. Passwords belong to Firebase Authentication. |
+| `users/{uid}` | Reads bound to `isOwner(uid) || isAdminOrProf() || isActiveLabMember()`; writes blocked to credential-like fields; role/status changes admin-only. |
+| Audit trail | `transactions` append-only (`update`/`delete` false), `userId == request.auth.uid`, `timestamp == request.time`, quantity conservation enforced. |
+| Actor authenticity | `stockRuptureRequests.reportedByUid == request.auth.uid`, `notifications.createdByUserId == request.auth.uid`, `adjustmentRequests/disposalRequests/purchaseRequests.requestedByUid == request.auth.uid`. |
+| Separation of duties | Adjustment/disposal/purchase approvals require a different reviewer (`requestedByUid != request.auth.uid`) and only allow PENDING → APPROVED/REJECTED single-step transitions. |
+| Sentinel feature | **JARVIS removed entirely** — component, backend tools service, all `/api/jarvis/*` routes, TTS/proxy surface, Gemini bundling in the client. |
+| Express API | No unauthenticated state store (`/api/shared-state*` removed). Single privileged endpoint `/api/inventory/import-document`, gated by `requireAuth` (ID-token verification via Firebase Admin) + `requireRole(ADMIN, PROFESSOR, TECHNICIAN)`, plus `helmet`, `express-rate-limit` (global 300/15min; import 10/15min), cross-origin allowlist, and 10 MB scoped body limit (100 KB default). |
+| Demo data | No seeding into production Firestore on login (`seedInitialLabInventory`, `resetToFourTemporaryAccounts` deleted). Demo data survives only as client-side offline preview. |
+| Draft rules | `DRAFT_firestore.rules` deleted (contained the anonymous-admin clause). |
+
+### Known deviations / operational requirements
+
+1. **`users` list for active members**: a signed-in active member can *list* profiles
+   (name/email/role only). This is required by the client-side role-based notification
+   routing. `get` remains owner/admin/prof-staff scoped and no credential fields exist
+   anywhere in the schema.
+2. **Role claim rollout**: roles currently resolve from the profile document when no
+   custom claim exists. Provision claims in Firebase Functions / Admin SDK
+   (`setCustomUserClaims(uid, { role })`) and update the profile document together;
+   rules prefer the token claim whenever present.
+3. **Google sign-in unverified tokens**: `server.ts` treats `google.com` provider
+   tokens as verified by design; email/password tokens require `email_verified`.
+4. **API keys**: `GEMINI_API_KEY` is server-only (`getGeminiClient` in `server.ts`);
+   the committed `firebase-applet-config.json` holds the app's *public* Firebase web
+   config (safe by design), while Firestore itself remains the authorization boundary.
+5. **Server auth requires credentials**: set `GOOGLE_APPLICATION_CREDENTIALS`; without
+   it the Admin SDK cannot verify tokens and `/api/inventory/import-document` fails
+   closed with 401/503.

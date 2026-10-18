@@ -16,7 +16,6 @@ export interface RoleManualSpec {
   title: string;
   username: string;
   email: string;
-  passcode: string;
   badge: string;
   accentColor: [number, number, number];
   overview: string;
@@ -45,7 +44,6 @@ export interface RoleGuideSection {
   title: string;
   badge: string;
   email: string;
-  accessCode: string;
   overview: string;
   allowedActions: string[];
   restrictedActions: string[];
@@ -73,7 +71,6 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     title: 'Director',
     username: 'Director',
     email: 'director@lcsco.dz',
-    passcode: 'LCSCO-2026',
     badge: 'FULL INSTITUTIONAL AUTHORITY (ADMIN)',
     accentColor: [27, 138, 42], // LCSCO Emerald #1B8A2A
     overview:
@@ -103,7 +100,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
         workflowTitle: 'Adding or Removing LCSCO Researcher Profiles (Director Exclusive)',
         navigationPath: 'Navigation Bar -> Profile',
         instructions: [
-          'Sign in with Username "Director" (or director@lcsco.dz) and Password "LCSCO-2026".',
+          'Sign in with your LCSCO laboratory account (Firebase Authentication — Google or email/password).',
           'Click "Profile" in the top navigation bar (next to Dashboard and Guide / How to Use).',
           'Update your own password or attach a profile picture in "My Account & Security Settings".',
           'Scroll to "Director Exclusive: Add or Remove LCSCO Profiles" to create new accounts or click the red "Remove Profile" button next to any user.',
@@ -141,7 +138,6 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     title: 'Lab Engineer',
     username: 'Lab Engineer',
     email: 'lab.engineer@lcsco.dz',
-    passcode: 'LCSCO-2026',
     badge: 'OPERATIONAL INVENTORY MANAGER & STORAGE PLACEMENT',
     accentColor: [30, 58, 138], // LCSCO Deep Blue #1E3A8A
     overview:
@@ -172,7 +168,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
         workflowTitle: 'Registering a Bottle & Selecting Its Physical Location',
         navigationPath: 'Navigation Bar -> Reagents -> + Add Reagent',
         instructions: [
-          'Sign in with Username "Lab Engineer" and Password "LCSCO-2026", then open "Reagents".',
+          'Sign in with your LCSCO laboratory account, then open "Reagents".',
           'Click "+ Add Reagent" and choose the chemical product and initial quantity.',
           'Select the physical location using separate dropdowns: Room, Cabinet, Side (Left/Right), Shelf, and Position.',
           'Verify the live generated location code (e.g., R204-FLAM01-L-S02-P01) and Co-Location Compatibility check.',
@@ -210,7 +206,6 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     title: 'Professor',
     username: 'Professor',
     email: 'professor@lcsco.dz',
-    passcode: 'LCSCO-2026',
     badge: 'PRINCIPAL INVESTIGATOR & SAFETY SUPERVISOR',
     accentColor: [15, 118, 110], // Teal #0F766E
     overview:
@@ -240,7 +235,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
         workflowTitle: 'Reviewing & Resolving Bottles Flagged by PhD Students (Workflow B)',
         navigationPath: 'Navigation Bar -> Dashboard',
         instructions: [
-          'Sign in with Username "Professor" and Password "LCSCO-2026".',
+          'Sign in with your LCSCO laboratory account (Firebase Authentication).',
           'On the Dashboard, inspect any container in the "Identification & Quarantine Review Queue" (such as ACD-201).',
           'Enter your supervisory verification note and click "Identify / Restore" or "Mark for Disposal".',
         ],
@@ -276,7 +271,6 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     title: 'PhD Student',
     username: 'PhD Student',
     email: 'phd.student@lcsco.dz',
-    passcode: 'LCSCO-2026',
     badge: 'BENCH SYNTHESIS RESEARCHER (AUTO-SUBTRACT & QR SCAN)',
     accentColor: [180, 83, 9], // Amber #B45309
     overview:
@@ -307,7 +301,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
         workflowTitle: 'Withdrawing a Reagent or Solvent (Automatic Math Subtraction)',
         navigationPath: 'Navigation Bar -> Dashboard (or Scan QR)',
         instructions: [
-          'Sign in with Username "PhD Student" and Password "LCSCO-2026".',
+          'Sign in with your LCSCO laboratory account (Firebase Authentication).',
           'In "Express Bench Reagent / Solvent Withdrawal", select the bottle (e.g., SOL-001 Acetone or CAT-309 Pd/C).',
           'Enter the quantity to withdraw (e.g., 50 mL). Verify the live subtraction preview: "1850 - 50 = 1800 mL".',
           'Enter your synthesis experiment reference and click "Withdraw & Subtract Now".',
@@ -575,7 +569,7 @@ function renderRoleGuidePage(doc: jsPDF, spec: RoleManualSpec, isFirstPage: bool
   doc.setTextColor(255, 255, 255);
   doc.text(`User: ${spec.username} (${spec.email})`, 135, 10.5);
   doc.setTextColor(52, 211, 153);
-  doc.text(`Password: ${spec.passcode}`, 135, 16.8);
+  doc.text('Sign-in: Firebase Authentication', 135, 16.8);
 
   let y = 33;
 

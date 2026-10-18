@@ -23,7 +23,6 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
     title: '1. DIRECTOR — Full Administrator',
     badge: 'DIRECTOR · FULL ADMINISTRATOR',
     email: 'director@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       'As the Director, you have full administrative access to the laboratory inventory and system with no restrictions. You oversee all inventory, approve stock adjustments, approve chemical purchases & disposals, manage storage locations, and manage all user accounts and roles.',
     allowedActions: [
@@ -58,7 +57,7 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
         instructions: [
           'Click "Profile" in the top navigation bar.',
           'Create new user profiles, assign or change roles (Director, Professor, Technician, PhD Student), or Activate/Deactivate users.',
-          'Update your own password and optional profile picture.',
+          'New members must have a Firebase Authentication account for their email (or sign in with Google) before they can access the inventory.',
         ],
         expectedResult:
           'Only the Director can create, edit, activate/deactivate, or remove user profiles.',
@@ -94,7 +93,6 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
     title: '2. PROFESSOR — Supervisor / Research Group Manager',
     badge: 'PROFESSOR · SUPERVISOR',
     email: 'professor@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       'As a Professor, you supervise research-group inventory, consumption, and safety approvals. You can add/edit chemicals, approve purchase and disposal requests for your group, request inventory corrections, and export reports, but cannot manage users or permanently delete records.',
     allowedActions: [
@@ -141,7 +139,7 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
         navigationPath: 'Dashboard / Profile',
         instructions: [
           'Click "Export CSV Report" on the Dashboard or Inventory list to download group statistics.',
-          'Open "Profile" to update your personal password and profile photo.',
+          'Open "Profile" to edit your display name and profile photo. Your sign-in password is managed securely by Firebase Authentication.',
         ],
         expectedResult:
           'Research-group reports are exported cleanly while user management remains locked to the Director.',
@@ -165,7 +163,6 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
     title: '3. LAB ENGINEER — Operational Inventory Manager',
     badge: 'LAB ENGINEER · OPERATIONAL INVENTORY MANAGER',
     email: 'lab.engineer@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       'As the Lab Engineer, you are responsible for operational inventory management. You register newly received chemicals, manage physical locations (Room → Cabinet → Side → Shelf → Position), perform controlled quantity adjustments with confirmation, create disposal requests, and record approved disposals.',
     allowedActions: [
@@ -233,7 +230,6 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
     title: '4. PHD STUDENT — Researcher / Inventory User',
     badge: 'PHD STUDENT · RESEARCHER',
     email: 'phd.student@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       'As a PhD Student, you access the inventory for research purposes without modifying master chemical records. You can view available chemicals and SDS, scan QR codes, record chemical consumption, view your own usage history, create purchase and disposal requests, and report damaged/expired items.',
     allowedActions: [
@@ -308,7 +304,6 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
     title: '1. DIRECTEUR — Administrateur Complet',
     badge: 'DIRECTEUR · ADMINISTRATEUR COMPLET',
     email: 'director@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       "En tant que Directeur, vous disposez d'un accès administratif complet à l'inventaire et au système, sans aucune restriction. Vous gérez l'inventaire, approuvez les ajustements de stock, les achats et les éliminations, et gérez tous les comptes utilisateurs et leurs rôles.",
     allowedActions: [
@@ -379,7 +374,6 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
     title: '2. PROFESSEUR — Superviseur / Responsable de Groupe',
     badge: 'PROFESSEUR · SUPERVISEUR',
     email: 'professor@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       "En tant que Professeur, vous supervisez l'inventaire et les activités de votre groupe de recherche. Vous pouvez ajouter/modifier des produits, approuver les demandes d'achat et d'élimination du groupe, demander des corrections de stock et exporter des rapports, sans gérer les utilisateurs ni supprimer définitivement des flacons.",
     allowedActions: [
@@ -450,7 +444,6 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
     title: '3. INGÉNIEUR DE LABORATOIRE — Gestionnaire Opérationnel',
     badge: 'INGÉNIEUR LABO · GESTIONNAIRE OPÉRATIONNEL',
     email: 'lab.engineer@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       "En tant qu'Ingénieur de Laboratoire, vous êtes responsable de la gestion opérationnelle de l'inventaire : réception des livraisons, enregistrement des flacons, gestion des emplacements physiques (Salle → Armoire → Côté Gauche/Droit → Étagère → Position), ajustements contrôlés de quantité avec confirmation et exécution des éliminations approuvées.",
     allowedActions: [
@@ -518,7 +511,6 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
     title: '4. DOCTORANT — Chercheur / Utilisateur d’Inventaire',
     badge: 'DOCTORANT · CHERCHEUR',
     email: 'phd.student@lcsco.dz',
-    accessCode: 'LCSCO-2026',
     overview:
       "En tant que Doctorant, vous accédez à l'inventaire pour vos recherches sans modifier directement les informations maîtresses. Vous consultez les réactifs disponibles et leurs FDS, scannez les QR, enregistrez votre consommation, suivez votre historique et créez des demandes d'achat ou d'élimination.",
     allowedActions: [

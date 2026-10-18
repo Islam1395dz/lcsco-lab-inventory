@@ -3,7 +3,7 @@ import {
   User as FirebaseUser,
   getRedirectResult,
   onAuthStateChanged,
-  signInAnonymously,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
   signOut as firebaseSignOut,
@@ -23,6 +23,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, parseDisplayError } from '../firebase';
+import { useLanguage } from './LanguageContext';
 import {
   AppNotification,
   ChemicalContainer,
@@ -67,7 +68,6 @@ import {
   flagContainerIssue,
   markAllFirestoreNotificationsRead,
   markFirestoreNotificationRead,
-  resetToFourTemporaryAccounts,
   saveFirestoreAdjustmentRequest,
   saveFirestoreDisposalRequest,
   saveFirestoreFloorPlanConfig,
@@ -75,7 +75,6 @@ import {
   saveFirestorePhysicalLocation,
   saveFirestorePurchaseRequest,
   saveFirestoreStockRupture,
-  seedInitialLabInventory,
   seedInitialPhysicalLocations,
   updateContainerAndProductInFirestore,
   updateFirestoreAdjustmentRequest,
@@ -105,85 +104,23 @@ import {
   INITIAL_PHYSICAL_LOCATIONS,
 } from '../data/demoInventoryData';
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'islam.hasnaoui13@gmail.com';
+const BOOTSTRAPPED_ADMIN_EMAIL = 'director@lcsco.dz';
 
-export interface TemporaryAccountSpec {
-  uid: string;
-  fullName: string;
-  email: string;
-  accessCode: string;
-  role: UserRole;
-  badge: string;
-  summary: string;
-  laboratoryIds: string[];
-}
-
-/**
- * The 4 Official User Roles & Accounts:
- * 1. DIRECTOR — Full Administrator (`UserRole.ADMIN`)
- * 2. PROFESSOR — Supervisor / Research Group Manager (`UserRole.PROFESSOR`)
- * 3. LAB ENGINEER — Operational Inventory Manager (`UserRole.TECHNICIAN`)
- * 4. PHD STUDENT — Researcher / Inventory User (`UserRole.STUDENT_RESEARCHER` / `UserRole.PHD_STUDENT`)
- */
-export const TEMPORARY_LCSCO_ACCOUNTS: TemporaryAccountSpec[] = [
-  {
-    uid: 'temp-director',
-    fullName: 'Director',
-    email: 'director@lcsco.dz',
-    accessCode: 'LCSCO2026',
-    role: UserRole.ADMIN,
-    badge: '1. DIRECTOR — Full Administrator',
-    summary:
-      'Full access to inventory, physical storage locations, stock movements, controlled quantity adjustments & approvals, disposal/purchase approvals, user & role governance, audit logs, and system settings.',
-    laboratoryIds: ['LCSCO'],
-  },
-  {
-    uid: 'temp-technician',
-    fullName: 'Lab Engineer',
-    email: 'technician@lcsco.dz',
-    accessCode: 'LCSCO2026',
-    role: UserRole.TECHNICIAN,
-    badge: '2. LAB ENGINEER — Operational Inventory Manager',
-    summary:
-      'Manages daily chemical inventory, receives orders, records stock entries/withdrawals, performs physical corrections, and handles chemical waste disposal.',
-    laboratoryIds: ['LCSCO'],
-  },
-  {
-    uid: 'temp-professor',
-    fullName: 'Professor',
-    email: 'professor@lcsco.dz',
-    accessCode: 'LCSCO2026',
-    role: UserRole.PROFESSOR,
-    badge: '3. PROFESSOR — Research Group Supervisor',
-    summary:
-      'Approves chemical purchase and disposal requests, oversees laboratory stock usage, and monitors safety compliance.',
-    laboratoryIds: ['LCSCO'],
-  },
-  {
-    uid: 'temp-phd-student',
-    fullName: 'PhD Student',
-    email: 'student@lcsco.dz',
-    accessCode: 'LCSCO2026',
-    role: UserRole.PHD_STUDENT,
-    badge: '4. PHD STUDENT — Researcher / Reagent User',
-    summary:
-      'Logs reagent consumption, submits purchase requests, and reports stock ruptures or low levels.',
-    laboratoryIds: ['LCSCO'],
-  },
-];
-
-export const INITIAL_TEMPORARY_USERS: UserProfile[] = TEMPORARY_LCSCO_ACCOUNTS.map((acc) => ({
-  uid: acc.uid,
-  fullName: acc.fullName,
-  email: acc.email,
-  password: acc.accessCode,
-  role: acc.role,
+/** Offline/preview fallback identity used only when no one is signed in. */
+const PREVIEW_DEFAULT_PROFILE: UserProfile = {
+  uid: 'preview-user',
+  fullName: 'Preview Mode',
+  email: 'preview@lcsco.dz',
+  role: UserRole.ADMIN,
   laboratoryIds: ['LCSCO'],
   status: UserStatus.ACTIVE,
-  isDemoAccount: true,
   createdAt: '2026-10-06T08:00:00Z',
   lastLogin: '2026-10-06T08:00:00Z',
-}));
+  isDemoAccount: true,
+};
+
+export const BOOTSTRAP_ADMIN_EMAIL = BOOTSTRAPPED_ADMIN_EMAIL;
+export const PREVIEW_PROFILE = PREVIEW_DEFAULT_PROFILE;
 
 const SHARED_STORAGE_KEY = 'lcsco_shared_inventory_state_v11';
 
@@ -201,15 +138,13 @@ interface AuthAndInventoryContextValue {
   isPreviewMode: boolean;
   enterPreviewMode: () => void;
   exitPreviewMode: () => void;
-  loginWithTemporaryAccount: (roleOrUid: UserRole | string) => Promise<void> | void;
-  resetAccountsToFourTemporary: () => Promise<void>;
   authReady: boolean;
   dataLoading: boolean;
   error: string | null;
   clearError: () => void;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmailAndPasswordFlow: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  switchMyRoleForTesting: (newRole: UserRole) => Promise<void>;
   // Real-time Collections
   laboratories: Laboratory[];
   products: Product[];
@@ -411,10 +346,11 @@ interface AuthAndInventoryContextValue {
 const AuthAndInventoryContext = createContext<AuthAndInventoryContextValue | undefined>(undefined);
 
 export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { tr } = useLanguage();
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
-  const [previewProfile, setPreviewProfile] = useState<UserProfile>(INITIAL_TEMPORARY_USERS[0]);
+  const [previewProfile, setPreviewProfile] = useState<UserProfile>(PREVIEW_DEFAULT_PROFILE);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [dataLoading, setDataLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -481,7 +417,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     cachedState?.transactions || INITIAL_DEMO_TRANSACTIONS
   );
   const [allUsers, setAllUsers] = useState<UserProfile[]>(
-    cachedState?.users || INITIAL_TEMPORARY_USERS
+    cachedState?.users || []
   );
   const [adjustmentRequests, setAdjustmentRequests] = useState<StockAdjustmentRequest[]>(
     cachedState?.adjustmentRequests || INITIAL_DEMO_ADJUSTMENTS
@@ -509,10 +445,9 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     }
   );
 
-  // Cross-Tab & Multi-Session Real-Time Synchronization
+  // Cross-Tab Synchronization (local storage only — the browser localStorage
+  // mirror keeps the offline preview coherent; no server-side shared store).
   useEffect(() => {
-    let lastSeenVersion = 0;
-
     const applySharedData = (data: any) => {
       if (!data) return;
       if (Array.isArray(data.containers)) {
@@ -552,33 +487,8 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
     window.addEventListener('storage', handleStorageEvent);
 
-    const syncWithServer = async () => {
-      if (firebaseUser) return;
-      try {
-        const res = await fetch('/api/shared-state');
-        if (!res.ok) return;
-        const serverState = await res.json();
-
-        if (serverState && serverState.version > lastSeenVersion) {
-          lastSeenVersion = serverState.version;
-          applySharedData(serverState);
-          try {
-            localStorage.setItem(SHARED_STORAGE_KEY, JSON.stringify(serverState));
-          } catch {
-            // Ignore quota errors
-          }
-        }
-      } catch {
-        // Ignore network errors
-      }
-    };
-
-    syncWithServer();
-    const intervalId = window.setInterval(syncWithServer, 2500);
-
     return () => {
       window.removeEventListener('storage', handleStorageEvent);
-      window.clearInterval(intervalId);
     };
   }, [firebaseUser]);
 
@@ -597,24 +507,39 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       try {
         const userRef = doc(db, 'users', user.uid);
         const snap = await getDoc(userRef);
-        const isBootstrapped = user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+        const verifiedEmail = (user.email || '').toLowerCase();
+        const emailVerified = user.emailVerified || user.providerData.some(
+          (p) => p.providerId === 'google.com'
+        );
 
         if (!snap.exists()) {
+          // Only the designated, email-verified bootstrap identity may create
+          // the first administrator profile. Everyone else is signed out —
+          // accounts are provisioned by the Director, never self-assigned.
+          if (!(emailVerified && verifiedEmail === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase())) {
+            setError(
+              tr(
+                'Your account is not provisioned yet. Ask the Laboratory Director to create your profile.',
+                'Votre compte n’est pas encore provisionné. Demandez au Directeur de créer votre profil.'
+              )
+            );
+            await firebaseSignOut(auth);
+            setProfile(null);
+            setAuthReady(true);
+            return;
+          }
+
           const initialRole: UserRole = UserRole.ADMIN;
           const defaultName =
-            (user.displayName && user.displayName.trim()) || 'Director';
+            (user.displayName && user.displayName.trim()) || 'Laboratory Director';
 
           const newProfileData: any = {
             uid: user.uid,
             fullName: defaultName.slice(0, SCHEMA_CONSTRAINTS.FULL_NAME_MAX_LENGTH),
-            email: (user.email || 'director@lcsco.dz').slice(
-              0,
-              SCHEMA_CONSTRAINTS.EMAIL_MAX_LENGTH
-            ),
+            email: verifiedEmail.slice(0, SCHEMA_CONSTRAINTS.EMAIL_MAX_LENGTH),
             role: initialRole,
             laboratoryIds: ['LCSCO'],
             status: UserStatus.ACTIVE,
-            isDemoAccount: false,
             createdAt: serverTimestamp(),
             lastLogin: serverTimestamp(),
           };
@@ -624,17 +549,10 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           await setDoc(userRef, newProfileData);
 
           await seedInitialPhysicalLocations();
-
-          await seedInitialLabInventory({
-            uid: user.uid,
-            fullName: newProfileData.fullName,
-            role: initialRole,
-          });
         } else {
           const existingData = snap.data() as UserProfile;
           const updatePayload: any = {
             lastLogin: serverTimestamp(),
-            isDemoAccount: false,
           };
           if (
             user.displayName &&
@@ -651,20 +569,6 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
             updatePayload.avatarUrl = user.photoURL;
           }
           await updateDoc(userRef, updatePayload);
-          await seedInitialPhysicalLocations();
-
-          if (
-            isBootstrapped ||
-            existingData.role === UserRole.ADMIN ||
-            existingData.role === UserRole.PROFESSOR ||
-            existingData.role === UserRole.TECHNICIAN
-          ) {
-            await seedInitialLabInventory({
-              uid: user.uid,
-              fullName: existingData.fullName,
-              role: existingData.role,
-            });
-          }
         }
       } catch (err) {
         setError(parseDisplayError(err));
@@ -965,13 +869,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
   const myNotifications = useMemo(() => {
     if (!effectiveProfile) return [];
-    const canonicalRoleUser = INITIAL_TEMPORARY_USERS.find(
-      (u) => u.role === effectiveProfile.role
-    );
     const matchingIds = new Set<string>([effectiveProfile.uid]);
-    if (canonicalRoleUser) {
-      matchingIds.add(canonicalRoleUser.uid);
-    }
     return notifications
       .filter((n) => matchingIds.has(n.recipientUserId))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -982,6 +880,30 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
   }, [myNotifications]);
 
   // 4. Real-time Users Collection Listener
+  useEffect(() => {
+    if (!authReady || !firebaseUser || !profile) return;
+
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const list = snap.docs.map((d) => d.data() as UserProfile);
+        if (list.length > 0) {
+          setAllUsers(list);
+        }
+      },
+      (err) => {
+        try {
+          handleFirestoreError(err, OperationType.LIST, 'users');
+        } catch (e) {
+          setError(parseDisplayError(e));
+        }
+      }
+    );
+
+    return () => unsubUsers();
+  }, [authReady, firebaseUser, profile?.uid]);
+
+  // 4. Real-time Users Collection Listener (deduplicated single subscription)
   useEffect(() => {
     if (!authReady || !firebaseUser || !profile) return;
 
@@ -1019,109 +941,18 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     physicalLocations: PhysicalLocationConfig[];
     labFloorPlanConfig?: LabFloorPlanConfig;
   }) => {
+    // Local mirror only. Firestore is the single system of record; there is no
+    // server-side shared-state store to write to (that endpoint was removed,
+    // it was unauthenticated and mutable by anyone).
     try {
       localStorage.setItem(SHARED_STORAGE_KEY, JSON.stringify(nextState));
     } catch {
       // Ignore quota errors
     }
-    fetch('/api/shared-state', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nextState),
-    }).catch(() => {
-      // Ignore offline errors
-    });
   };
 
-  const loginWithTemporaryAccount = async (roleOrUid: UserRole | string) => {
-    setError(null);
-    const normalizedInput = String(roleOrUid).toLowerCase().trim();
-    const isLabEngineerAlias =
-      normalizedInput === 'technician@lcsco.dz' ||
-      normalizedInput === 'lab.engineer@lcsco.dz' ||
-      normalizedInput === 'lab engineer' ||
-      normalizedInput === 'technician';
-
-    const matched =
-      allUsers.find(
-        (u) =>
-          u.role === roleOrUid ||
-          u.uid === roleOrUid ||
-          u.email.toLowerCase() === normalizedInput ||
-          u.fullName.toLowerCase() === normalizedInput ||
-          (isLabEngineerAlias && u.role === UserRole.TECHNICIAN)
-      ) ||
-      INITIAL_TEMPORARY_USERS.find(
-        (u) =>
-          u.role === roleOrUid ||
-          u.uid === roleOrUid ||
-          u.email.toLowerCase() === normalizedInput ||
-          (isLabEngineerAlias && u.role === UserRole.TECHNICIAN)
-      ) ||
-      allUsers[0] ||
-      INITIAL_TEMPORARY_USERS[0];
-
-    if (matched.status === UserStatus.DEACTIVATED) {
-      setError('Account Deactivated: Please contact the Laboratory Director.');
-      return;
-    }
-
-    setPreviewProfile(matched);
-
-    // Connect to Firebase Auth so all user actions and modifications persist directly to Firestore
-    try {
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
-      }
-      if (auth.currentUser) {
-        setIsPreviewMode(false);
-        const userRef = doc(db, 'users', auth.currentUser.uid);
-        await setDoc(
-          userRef,
-          {
-            uid: auth.currentUser.uid,
-            fullName: matched.fullName,
-            email: matched.email || 'director@lcsco.dz',
-            role: matched.role,
-            laboratoryIds: matched.laboratoryIds || ['LCSCO'],
-            status: UserStatus.ACTIVE,
-            lastLogin: serverTimestamp(),
-            createdAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      } else {
-        setIsPreviewMode(true);
-      }
-    } catch (authErr) {
-      console.warn('Firebase login session initialization fallback:', authErr);
-      setIsPreviewMode(true);
-    }
-  };
-
-  const resetAccountsToFourTemporary = async () => {
-    setError(null);
-    setAllUsers(INITIAL_TEMPORARY_USERS);
-    const currentRole = effectiveProfile?.role || UserRole.ADMIN;
-    const matched =
-      INITIAL_TEMPORARY_USERS.find((u) => u.role === currentRole) || INITIAL_TEMPORARY_USERS[0];
-    setPreviewProfile(matched);
-    persistSharedState({
-      containers,
-      transactions,
-      products,
-      laboratories,
-      users: INITIAL_TEMPORARY_USERS,
-      adjustmentRequests,
-      disposalRequests,
-      purchaseRequests,
-      stockRuptureRequests,
-      notifications,
-      physicalLocations,
-    });
-    if (firebaseUser) {
-      await resetToFourTemporaryAccounts(firebaseUser.uid);
-    }
+  const signInWithEmailAndPasswordFlow = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email.trim(), password);
   };
 
   const signInWithGoogle = async () => {
@@ -1143,13 +974,13 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       if (err?.code === 'auth/unauthorized-domain') {
         const domain = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
         setError(
-          `Google Sign-In: The domain "${domain}" is not yet registered in Firebase Console (Authentication > Settings > Authorized Domains). Use the Director login (password: LCSCO2026) below to access Firebase directly!`
+          `Google Sign-In: The domain "${domain}" is not yet registered in Firebase Console (Authentication > Settings > Authorized Domains).`
         );
         return;
       }
       if (err?.code === 'auth/operation-not-allowed') {
         setError(
-          'Google Sign-In is not enabled in Firebase Console. Please enable Google provider under Authentication > Sign-in method, or use the Director login (password: LCSCO2026) below.'
+          'Google Sign-In is not enabled in Firebase Console. Please enable the Google provider under Authentication > Sign-in method.'
         );
         return;
       }
@@ -1167,27 +998,6 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       }
     }
     setIsPreviewMode(false);
-  };
-
-  const switchMyRoleForTesting = async (newRole: UserRole) => {
-    setError(null);
-    const matchingPersona =
-      allUsers.find((u) => u.role === newRole) ||
-      INITIAL_TEMPORARY_USERS.find((u) => u.role === newRole) ||
-      INITIAL_TEMPORARY_USERS[0];
-    if (firebaseUser && profile) {
-      try {
-        await updateDoc(doc(db, 'users', firebaseUser.uid), {
-          role: newRole,
-          fullName: matchingPersona.fullName,
-          lastLogin: serverTimestamp(),
-        });
-      } catch (err) {
-        setError(parseDisplayError(err));
-      }
-    } else if (isPreviewMode) {
-      setPreviewProfile(matchingPersona);
-    }
   };
 
   const updatePreviewState = (updater: {
@@ -1646,6 +1456,12 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
    * Deletes all reagents, containers, and cabinets from local state, shared state, and Firestore
    */
   const clearAllInventoryAndCabinets = async () => {
+    if (!effectiveProfile) throw new Error('Authentication required.');
+    assertRolePermission(
+      effectiveProfile.role,
+      PermissionAction.ARCHIVE_REMOVE_CHEMICAL,
+      'Only the Director or Lab Engineer can clear the inventory.'
+    );
     updatePreviewState({
       products: [],
       containers: [],
@@ -1657,11 +1473,6 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       notifications: [],
       physicalLocations: [],
     });
-    try {
-      await fetch('/api/shared-state/clear-all', { method: 'POST' });
-    } catch {
-      // Ignore offline error
-    }
     if (firebaseUser) {
       await clearAllFirestoreInventory();
     }
@@ -2109,13 +1920,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         setError(parseDisplayError(err))
       );
     } else {
-      const canonicalRoleUser = INITIAL_TEMPORARY_USERS.find(
-        (u) => u.role === effectiveProfile.role
-      );
-      let updated = markAllUserNotificationsReadInList(notifications, effectiveProfile.uid);
-      if (canonicalRoleUser && canonicalRoleUser.uid !== effectiveProfile.uid) {
-        updated = markAllUserNotificationsReadInList(updated, canonicalRoleUser.uid);
-      }
+      const updated = markAllUserNotificationsReadInList(notifications, effectiveProfile.uid);
       updatePreviewState({ notifications: updated });
     }
   };
@@ -3289,15 +3094,13 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         isPreviewMode: !firebaseUser && isPreviewMode,
         enterPreviewMode: () => setIsPreviewMode(true),
         exitPreviewMode: () => setIsPreviewMode(false),
-        loginWithTemporaryAccount,
-        resetAccountsToFourTemporary,
         authReady,
         dataLoading,
         error,
         clearError: () => setError(null),
         signInWithGoogle,
+        signInWithEmailAndPasswordFlow,
         signOut,
-        switchMyRoleForTesting,
         laboratories,
         products,
         containers,

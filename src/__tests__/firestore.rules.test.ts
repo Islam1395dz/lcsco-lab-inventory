@@ -1,39 +1,137 @@
 import { describe, expect, it } from 'vitest';
-import fs from 'fs';
-import path from 'path';
+import { existsSync, readFileSync } from 'fs';
 
-describe('Firestore Security Rules & Dirty Dozen Payload Invariant Verification', () => {
-  const rulesPath = path.resolve(__dirname, '../../firestore.rules');
-  const rulesContent = fs.readFileSync(rulesPath, 'utf-8');
+/**
+ * Structural verification of the Firestore security rules.
+ *
+ * These assertions complement the emulator-backed integration suite
+ * (scripts/rules.emulator.test.mjs) which executes the real "Dirty Dozen"
+ * payloads against `firebase emulators:exec`.
+ */
+describe('Firestore Security Rules — security invariants present in rules source', () => {
+  const rulesPath = new URL('../firestore.rules', import.meta.url).pathname;
+  const rulesContent = readFileSync(rulesPath, 'utf-8');
 
-  it('Enforces Global Safety Net default-deny catch-all at top of rules', () => {
-    expect(rulesContent).toContain('match /{document=**} {\n      allow read, write: if false;\n    }');
+  it('keeps the default-deny catch-all as the first match block', () => {
+    const first = rulesContent.slice(0, 400);
+    expect(first).toContain('match /{document=**} {');
+    expect(first).toContain('allow read, write: if false;');
   });
 
-  it('Mandates email_verified == true on all write paths via isVerified() guard (Blocks Payload 4)', () => {
-    expect(rulesContent).toContain('request.auth.token.email_verified == true');
+  it('requires an email-verified identity for every write via isVerified()', () => {
+    const guard = rulesContent.slice(
+      rulesContent.indexOf('function isVerified()'),
+      rulesContent.indexOf('function incoming()')
+    );
+    expect(guard).toContain('request.auth.token.email_verified == true');
+    // Anonymous sessions must never count as verified identities.
+    expect(guard).not.toContain("sign_in_provider == 'anonymous'");
   });
 
-  it('Isolates PII on users/{uid} to owner or Admin/Professor (Blocks Payload 1, 2, 3)', () => {
-    expect(rulesContent).toContain('allow get: if isSignedIn() && isValidId(uid);');
-    expect(rulesContent).toContain("incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'lastLogin', 'laboratoryIds', 'avatarUrl', 'password', 'mustChangePassword'])");
+  it('never grants admin to anonymous sign-ins', () => {
+    const boot = rulesContent.slice(
+      rulesContent.indexOf('function isBootstrappedAdmin()'),
+      rulesContent.indexOf('function userDocExists()')
+    );
+    expect(boot).not.toContain("'anonymous'");
   });
 
-  it('Enforces strict append-only immutability on transactions/{transactionId} (Blocks Payload 9, 10, 11)', () => {
-    expect(rulesContent).toContain('match /transactions/{transactionId}');
-    expect(rulesContent).toContain('incoming().userId == request.auth.uid');
-    expect(rulesContent).toContain('allow update: if false;');
-    expect(rulesContent).toContain('allow delete: if false;');
+  it('resolves roles from verified custom claims (and never self-assignment)', () => {
+    expect(rulesContent).toContain('function tokenRole()');
+    expect(rulesContent).toContain("request.auth.token.role is string");
   });
 
-  it('Enforces relational existence and non-negative stock on containers (Blocks Payload 6, 7, 8)', () => {
-    expect(rulesContent).toContain('exists(/databases/$(database)/documents/products/$(incoming().productId))');
-    expect(rulesContent).toContain('data.currentQuantity is number && data.currentQuantity >= 0');
-    expect(rulesContent).toContain('incoming().unit == existing().unit');
+  it('isolates users/{uid} reads to owner and authorized roles', () => {
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /users/{uid}'),
+      rulesContent.indexOf('match /laboratories/{labId}')
+    );
+    expect(block).toContain('(isOwner(uid) || isAdminOrProf() || isActiveLabMember())');
+    // No unguarded reads: the old "any signed-in user reads any profile" hole.
+    expect(block).toContain(
+      'allow get: if isSignedIn() && (isOwner(uid) || isAdminOrProf() || isActiveLabMember());'
+    );
+    expect(block).not.toMatch(/allow (get|list): if isSignedIn\(\)\s*;/);
   });
 
-  it('Enforces strict key allowlists and string size bounds across all entities (Blocks Payload 5, 12)', () => {
+  it('forbids client-supplied credentials on the users collection', () => {
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /users/{uid}'),
+      rulesContent.indexOf('match /laboratories/{labId}')
+    );
+    expect(block).not.toContain("hasOnly(['fullName', 'lastLogin', 'laboratoryIds', 'avatarUrl', 'password'");
+    expect(block).not.toContain("'mustChangePassword'");
+  });
+
+  it('prevents any authenticated user from self-creating a profile with a privileged role', () => {
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /users/{uid}'),
+      rulesContent.indexOf('match /laboratories/{labId}')
+    );
+    expect(block).not.toContain("incoming().role == 'ADMIN'");
+  });
+
+  it('keeps transactions strictly append-only and server-timestamped', () => {
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /transactions/{transactionId}'),
+      rulesContent.indexOf('match /physicalLocations/{locationId}')
+    );
+    expect(block).toContain('data.timestamp == request.time');
+    expect(block).toContain('incoming().userId == request.auth.uid');
+    expect(block).toContain('data.quantityBefore + data.quantityChange == data.quantityAfter');
+    expect(block).toContain('allow update: if false;');
+    expect(block).toContain('allow delete: if false;');
+  });
+
+  it('enforces actor authenticity on reports and notifications', () => {
+    const ruptures = rulesContent.slice(
+      rulesContent.indexOf('match /stockRuptureRequests/{ruptureId}'),
+      rulesContent.indexOf('match /notifications/{notificationId}')
+    );
+    expect(ruptures).toContain('incoming().reportedByUid == request.auth.uid');
+
+    const notifications = rulesContent.slice(
+      rulesContent.indexOf('match /notifications/{notificationId}'),
+      rulesContent.indexOf('match /systemSettings/{settingId}')
+    );
+    expect(notifications).toContain('incoming().createdByUserId == request.auth.uid');
+  });
+
+  it('blocks self-approval of adjustment and disposal workflows', () => {
+    const adjustments = rulesContent.slice(
+      rulesContent.indexOf('match /adjustmentRequests/{requestId}'),
+      rulesContent.indexOf('match /disposalRequests/{disposalId}')
+    );
+    expect(adjustments).toContain("existing().status == 'PENDING'");
+    expect(adjustments).toContain('incoming().diff(existing()).affectedKeys().hasOnly([\'status\'])');
+    expect(adjustments).toContain('existing().requestedByUid != request.auth.uid');
+
+    const disposals = rulesContent.slice(
+      rulesContent.indexOf('match /disposalRequests/{disposalId}'),
+      rulesContent.indexOf('match /purchaseRequests/{purchaseId}')
+    );
+    expect(disposals).toContain('existing().requestedByUid != request.auth.uid');
+  });
+
+  it('enforces relational existence and non-negative stock on containers', () => {
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /containers/{containerId}'),
+      rulesContent.indexOf('match /transactions/{transactionId}')
+    );
+    expect(block).toContain('exists(/databases/$(database)/documents/products/$(incoming().productId))');
+    expect(block).toContain('data.currentQuantity is number && data.currentQuantity >= 0');
+    expect(block).toContain('incoming().unit == existing().unit');
+    expect(block).toContain('incoming().createdBy == request.auth.uid');
+  });
+
+  it('enforces strict key allowlists and string size bounds across all entities', () => {
     expect(rulesContent).toContain('data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 500');
     expect(rulesContent).toContain('data.keys().hasOnly([');
+  });
+});
+
+describe('Rules test environment', () => {
+  it('ships the emulator-backed payload suite referenced by the npm scripts', () => {
+    expect(existsSync(new URL('../scripts/rules.emulator.test.mjs', import.meta.url).pathname)).toBe(true);
   });
 });

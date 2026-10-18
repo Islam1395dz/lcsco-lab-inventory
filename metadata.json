@@ -1,6 +1,6 @@
 {
   "name": "ChemLedger — Laboratory Chemical Inventory & Audit System",
   "description": "Precision laboratory chemical inventory management system with real-time atomic stock tracking, QR scanner bench withdrawals, identification quarantine workflows, and immutable audit trails.",
-  "requestFramePermissions": ["camera", "microphone"],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

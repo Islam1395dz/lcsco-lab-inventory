@@ -7,7 +7,6 @@ import {
   ClipboardList,
   FlaskConical,
   Info,
-  Mic,
   QrCode,
   Repeat,
   ShieldCheck,
@@ -31,13 +30,11 @@ import { Button, PageHeader, StatusBadge } from './DesignSystem';
 interface DashboardViewProps {
   onSelectContainer: (containerId: string) => void;
   onNavigate: (view: any) => void;
-  onOpenJarvis?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectContainer,
   onNavigate,
-  onOpenJarvis,
 }) => {
   const {
     profile,
@@ -157,7 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {
             type: 'info',
             text: tr(
-              'Reminder: New accounts you create in Users receive a temporary password and must set a personal password on their first login.',
+              'Reminder: New accounts you create in Users need a Firebase Authentication account (email/password or Google) — passwords are managed by Firebase and never stored in the inventory database.',
               'Rappel : Les comptes créés dans Utilisateurs reçoivent un mot de passe temporaire qu’ils devront obligatoirement modifier dès leur première connexion.'
             ),
             actionLabel: tr('Manage Users', 'Gérer les utilisateurs'),
@@ -343,18 +340,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       {roleLabel}
                     </span>
-                  )}
-                  {onOpenJarvis && (
-                    <button
-                      type="button"
-                      onClick={onOpenJarvis}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#050B14] text-cyan-100 border border-cyan-500/50 hover:border-cyan-400 text-[11px] font-mono font-semibold shadow-2xs transition-colors cursor-pointer"
-                    >
-                      <Mic className="w-3 h-3 text-cyan-300" />
-                      <span>
-                        {tr('JARVIS Voice Assistant', 'Assistant Vocal JARVIS')}
-                      </span>
-                    </button>
                   )}
                 </div>
                 <p className="text-xs sm:text-sm text-slate-600">

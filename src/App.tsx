@@ -14,12 +14,9 @@ import {
   EyeOff,
   FlaskConical,
   Globe,
-  KeyRound,
   LayoutDashboard,
-  Lock,
   LogOut,
   Menu,
-  Mic,
   QrCode,
   Repeat,
   Settings,
@@ -46,8 +43,7 @@ import { AuthenticationPage } from './components/AuthenticationPage';
 import { NotificationCenter } from './components/NotificationCenter';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LCSCOLogo } from './components/LCSCOLogo';
-import { JarvisAssistant } from './components/JarvisAssistant';
-import { formatRoleLabel, formatShortRoleName } from './utils/formatters';
+import { formatRoleLabel } from './utils/formatters';
 
 export type AppRoute =
   | 'dashboard'   // Accueil
@@ -80,14 +76,12 @@ const MainShell: React.FC = () => {
     firebaseUser,
     profile,
     isPreviewMode,
-    updatePreviewState,
     authReady,
     error,
     clearError,
     signOut,
     isAdmin,
   } = useInventoryContext();
-
   const { language, toggleLanguage, tr } = useLanguage();
 
   const [activeRoute, setActiveRoute] = useState<AppRoute>('dashboard');
@@ -99,14 +93,6 @@ const MainShell: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState<boolean>(false);
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
-  const [jarvisOpen, setJarvisOpen] = useState<boolean>(false);
-
-  // First-login mandatory password change state
-  const [firstLoginNewPass, setFirstLoginNewPass] = useState<string>('');
-  const [firstLoginConfirmPass, setFirstLoginConfirmPass] = useState<string>('');
-  const [showFirstLoginPass, setShowFirstLoginPass] = useState<boolean>(false);
-  const [firstLoginError, setFirstLoginError] = useState<string | null>(null);
-
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -216,200 +202,36 @@ const MainShell: React.FC = () => {
     );
   }
 
-  const requiresPasswordChange =
-    Boolean(profile?.mustChangePassword) ||
-    Boolean(profile?.uid && localStorage.getItem(`lcsco_must_change_pass_${profile.uid}`) === 'true');
-
-  if (profile && requiresPasswordChange) {
-    const currentTempPassword =
-      localStorage.getItem(`lcsco_pass_${profile.uid}`) ||
-      profile.password ||
-      'LCSCO-2026';
-
-    const handleCompleteFirstLoginPasswordChange = (e: React.FormEvent) => {
-      e.preventDefault();
-      setFirstLoginError(null);
-      const trimmedNew = firstLoginNewPass.trim();
-      const trimmedConfirm = firstLoginConfirmPass.trim();
-
-      if (trimmedNew.length < 6) {
-        setFirstLoginError(
-          tr(
-            'New password must be at least 6 characters long.',
-            'Le nouveau mot de passe doit contenir au moins 6 caractères.'
-          )
-        );
-        return;
-      }
-
-      if (trimmedNew === currentTempPassword) {
-        setFirstLoginError(
-          tr(
-            'Your new personal password must be different from the temporary password assigned by the Director.',
-            'Votre nouveau mot de passe personnel doit être différent du mot de passe temporaire attribué par le Directeur.'
-          )
-        );
-        return;
-      }
-
-      if (trimmedNew !== trimmedConfirm) {
-        setFirstLoginError(
-          tr(
-            'New password and confirmation do not match.',
-            'Le nouveau mot de passe et sa confirmation ne correspondent pas.'
-          )
-        );
-        return;
-      }
-
-      localStorage.setItem(`lcsco_pass_${profile.uid}`, trimmedNew);
-      localStorage.removeItem(`lcsco_must_change_pass_${profile.uid}`);
-
-      updatePreviewState({
-        currentProfile: {
-          password: trimmedNew,
-          mustChangePassword: false,
-          lastLogin: new Date().toISOString(),
-        },
-      });
-
-      setFirstLoginNewPass('');
-      setFirstLoginConfirmPass('');
-      setFirstLoginError(null);
-    };
-
+  // A signed-in user whose profile has not been provisioned (or whose profile
+  // listener is still loading) waits on a neutral screen. Profiles are
+  // provisioned by the Director; roles are never self-assigned.
+  if (!profile) {
     return (
-      <div className="min-h-screen bg-[#F8FAFC] flex flex-col text-slate-900">
+      <div className="min-h-screen bg-[#F8FAFC] flex flex-col">
         <div className="sticky top-0 z-40 w-full">
           <TrialModeBanner />
         </div>
-
-        <div className="flex-1 flex flex-col justify-center items-center p-4 sm:p-6">
-          <div className="w-full max-w-md space-y-5">
-            <div className="flex flex-col items-center text-center space-y-2">
-              <LCSCOLogo size="md" />
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-semibold">
-                <KeyRound className="w-3.5 h-3.5 text-amber-600" />
-                {tr('First Login Security Step', 'Sécurité — Première connexion')}
-              </span>
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">
-                {tr(
-                  'Modify Your Temporary Password',
-                  'Modifiez votre mot de passe temporaire'
-                )}
-              </h1>
-              <p className="text-xs text-slate-600 max-w-sm">
-                {tr(
-                  'The Director created your account with a temporary password. You must choose a new personal password before accessing LCSCO Inventory.',
-                  'Le Directeur a créé votre compte avec un mot de passe temporaire. Vous devez définir un nouveau mot de passe personnel avant d’accéder à LCSCO Inventaire.'
-                )}
-              </p>
+        <div className="flex-1 flex flex-col justify-center items-center p-6">
+          <div className="text-center space-y-3 max-w-sm">
+            <div className="flex justify-center">
+              <LCSCOLogo size="lg" />
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-6 space-y-5">
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between gap-2 text-xs">
-                <div className="min-w-0">
-                  <div className="font-bold text-slate-900 truncate">{profile.fullName}</div>
-                  <div className="font-mono text-[11px] text-slate-500 truncate">
-                    {profile.email}
-                  </div>
-                </div>
-                <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[#1B8A2A] font-semibold text-[11px] shrink-0">
-                  {formatRoleLabel(profile.role, language)}
-                </span>
-              </div>
-
-              {firstLoginError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-900 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <span>{firstLoginError}</span>
-                </div>
+            <h1 className="text-lg font-bold tracking-tight text-slate-900">
+              {tr('Profile Loading', 'Chargement du profil')}
+            </h1>
+            <p className="text-xs text-slate-500">
+              {tr(
+                'Your laboratory profile is being prepared. If this screen persists, ask the Director to add you in the Users administration screen.',
+                'Votre profil de laboratoire est en cours de préparation. Si cet écran persiste, demandez au Directeur de vous ajouter depuis l’écran Utilisateurs.'
               )}
-
-              <form onSubmit={handleCompleteFirstLoginPasswordChange} className="space-y-4 text-xs">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1.5">
-                    {tr('New Personal Password *', 'Nouveau mot de passe personnel *')}
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showFirstLoginPass ? 'text' : 'password'}
-                      required
-                      minLength={6}
-                      value={firstLoginNewPass}
-                      onChange={(e) => setFirstLoginNewPass(e.target.value)}
-                      placeholder={tr(
-                        'At least 6 characters (different from temporary)',
-                        'Au moins 6 caractères (différent du temporaire)'
-                      )}
-                      className="w-full pl-9 pr-9 py-2.5 font-mono text-xs border border-slate-300 rounded-md focus:outline-none focus:border-[#1B8A2A]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowFirstLoginPass((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    >
-                      {showFirstLoginPass ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1.5">
-                    {tr('Confirm New Password *', 'Confirmer le nouveau mot de passe *')}
-                  </label>
-                  <div className="relative">
-                    <CheckCircle2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showFirstLoginPass ? 'text' : 'password'}
-                      required
-                      minLength={6}
-                      value={firstLoginConfirmPass}
-                      onChange={(e) => setFirstLoginConfirmPass(e.target.value)}
-                      placeholder={tr(
-                        'Re-enter your new password',
-                        'Saisissez à nouveau votre mot de passe'
-                      )}
-                      className="w-full pl-9 pr-3 py-2.5 font-mono text-xs border border-slate-300 rounded-md focus:outline-none focus:border-[#1B8A2A]"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-2 space-y-2">
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 text-xs font-semibold text-white bg-[#1B8A2A] rounded-md hover:bg-emerald-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <KeyRound className="w-4 h-4" />
-                    <span>
-                      {tr(
-                        'Save New Password & Access Inventory',
-                        'Enregistrer le nouveau mot de passe et accéder à l’inventaire'
-                      )}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFirstLoginNewPass('');
-                      setFirstLoginConfirmPass('');
-                      setFirstLoginError(null);
-                      signOut();
-                    }}
-                    className="w-full py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>{tr('Cancel & Sign Out', 'Annuler et se déconnecter')}</span>
-                  </button>
-                </div>
-              </form>
-            </div>
+            </p>
+            <button
+              type="button"
+              onClick={() => signOut()}
+              className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer"
+            >
+              {tr('Sign Out', 'Se déconnecter')}
+            </button>
           </div>
         </div>
       </div>
@@ -527,26 +349,8 @@ const MainShell: React.FC = () => {
             })}
           </nav>
 
-          {/* Zone 3: JARVIS Voice AI | Notifications | User Profile Dropdown ▾ | Mobile Menu */}
+          {/* Zone 3: Notifications | User Profile Dropdown ▾ | Mobile Menu */}
           <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => setJarvisOpen((prev) => !prev)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-mono font-semibold transition-all cursor-pointer ${
-                jarvisOpen
-                  ? 'bg-[#050B14] text-cyan-200 border-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.25)]'
-                  : 'bg-[#050B14] text-cyan-100 border-cyan-500/40 hover:border-cyan-400'
-              }`}
-              title={tr(
-                'Open JARVIS Voice Laboratory Assistant',
-                'Ouvrir l’assistant vocal JARVIS'
-              )}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <Mic className="w-3.5 h-3.5 text-cyan-300" />
-              <span className="hidden sm:inline">JARVIS</span>
-            </button>
-
             <NotificationCenter
               onSelectContainer={navigateToContainer}
               onNavigateDashboard={() => navigateToRoute('dashboard')}
@@ -716,7 +520,6 @@ const MainShell: React.FC = () => {
         {activeRoute === 'dashboard' && (
           <DashboardView
             onSelectContainer={navigateToContainer}
-            onOpenJarvis={() => setJarvisOpen(true)}
             onNavigate={(r) => {
               if (r === 'calculator') {
                 handleOpenCalculator();
@@ -778,12 +581,6 @@ const MainShell: React.FC = () => {
           onSelectContainer={navigateToContainer}
         />
       </main>
-
-      <JarvisAssistant
-        onSelectContainer={navigateToContainer}
-        externalOpen={jarvisOpen}
-        onExternalOpenChange={setJarvisOpen}
-      />
 
       <OfflineIndicator />
 

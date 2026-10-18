@@ -50,7 +50,6 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
   const canManageLocations = canPerform(PermissionAction.MANAGE_STORAGE_LOCATIONS);
 
   const [fullName, setFullName] = useState(profile?.fullName || '');
-  const [newPassword, setNewPassword] = useState(profile?.password || 'LCSCO-2026');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
@@ -68,7 +67,6 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
   useEffect(() => {
     if (profile) {
       setFullName(profile.fullName);
-      setNewPassword(profile.password || 'LCSCO-2026');
     }
   }, [profile]);
 
@@ -81,16 +79,10 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
     setSaving(true);
     setMessage(null);
     try {
-      const cleanPass = newPassword.trim() || 'LCSCO-2026';
-      localStorage.setItem(`lcsco_pass_${profile.uid}`, cleanPass);
-      localStorage.removeItem(`lcsco_must_change_pass_${profile.uid}`);
-
       if (isPreviewMode) {
         updatePreviewState({
           currentProfile: {
             fullName: fullName.trim(),
-            password: cleanPass,
-            mustChangePassword: false,
             laboratoryIds: ['LCSCO'],
             lastLogin: new Date().toISOString(),
           },
@@ -447,14 +439,13 @@ export const SettingsView: React.FC<SettingsViewProps> = () => {
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1 flex items-center gap-1">
               <KeyRound className="w-3.5 h-3.5 text-slate-400" />
-              <span>{isFr ? 'Code d’accès' : 'Access Code'}</span>
+              <span>{isFr ? 'Mot de passe' : 'Password'}</span>
             </label>
             <input
               type="text"
-              required
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg font-mono focus:outline-none focus:border-teal-600"
+              disabled
+              value={isFr ? 'Géré par Firebase Authentication' : 'Managed by Firebase Authentication'}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 text-slate-500 font-mono"
             />
           </div>
 

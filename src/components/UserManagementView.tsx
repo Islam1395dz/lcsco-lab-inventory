@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   ExternalLink,
-  KeyRound,
   Lock,
   Plus,
   Trash2,
@@ -42,10 +41,7 @@ export const UserManagementView: React.FC = () => {
 
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberEmail, setNewMemberEmail] = useState('');
-  const [newMemberPassword, setNewMemberPassword] = useState('LCSCO-2026');
   const [newMemberRole, setNewMemberRole] = useState<UserRole>(UserRole.PHD_STUDENT);
-  const [resetPassTarget, setResetPassTarget] = useState<UserProfile | null>(null);
-  const [resetTempPassword, setResetTempPassword] = useState('LCSCO-2026');
 
   const productAggregateStock = React.useMemo(() => {
     const map = new Map<string, number>();
@@ -71,11 +67,13 @@ export const UserManagementView: React.FC = () => {
         );
       }
 
-      const tempPassword = newMemberPassword.trim() || 'LCSCO-2026';
       const generatedUid = `LCSCO-${Date.now().toString(36).toUpperCase()}`;
       let createdUid = generatedUid;
 
-      const actorUid = firebaseUser?.uid || profile.uid || 'temp-director';
+      // Credential management belongs to Firebase Authentication: the Director
+      // provisions the profile; the user signs in with their own (resettable)
+      // password or Google identity. No passwords transit through Firestore.
+      const actorUid = firebaseUser?.uid || profile.uid;
       try {
         createdUid = await createLabMemberProfile({
           uid: generatedUid,
@@ -83,8 +81,6 @@ export const UserManagementView: React.FC = () => {
           email: newMemberEmail.trim(),
           role: newMemberRole,
           laboratoryIds: ['LCSCO'],
-          password: tempPassword,
-          mustChangePassword: true,
           status: UserStatus.ACTIVE,
           actor: {
             uid: actorUid,
@@ -100,8 +96,6 @@ export const UserManagementView: React.FC = () => {
         uid: createdUid || generatedUid,
         fullName: newMemberName.trim(),
         email: newMemberEmail.trim(),
-        password: tempPassword,
-        mustChangePassword: true,
         role: newMemberRole,
         laboratoryIds: ['LCSCO'],
         status: UserStatus.ACTIVE,
@@ -111,19 +105,16 @@ export const UserManagementView: React.FC = () => {
       updatePreviewState({
         users: [...allUsers.filter((u) => u.uid !== createdUser.uid), createdUser],
       });
-      localStorage.setItem(`lcsco_pass_${createdUid || generatedUid}`, tempPassword);
-      localStorage.setItem(`lcsco_must_change_pass_${createdUid || generatedUid}`, 'true');
 
       setFeedback({
         type: 'success',
         message: tr(
-          `Added user ${newMemberName} (${formatRoleLabel(newMemberRole, language)}) with temporary password "${tempPassword}". They will be required to change their password on first login.`,
-          `Utilisateur ${newMemberName} ajouté (${formatRoleLabel(newMemberRole, language)}) avec le mot de passe temporaire « ${tempPassword} ». Il devra modifier son mot de passe lors de sa première connexion.`
+          `Added user ${newMemberName} (${formatRoleLabel(newMemberRole, language)}). They can sign in with their Google account, or with an email/password account you create for them in Firebase Console (Authentication > Users).`,
+          `Utilisateur ${newMemberName} ajouté (${formatRoleLabel(newMemberRole, language)}). Il peut se connecter avec son compte Google, ou avec un compte e-mail/mot de passe que vous créez pour lui dans la console Firebase (Authentication > Users).`
         ),
       });
       setNewMemberName('');
       setNewMemberEmail('');
-      setNewMemberPassword('LCSCO-2026');
       setShowAddUserModal(false);
     } catch (err) {
       setFeedback({ type: 'error', message: parseDisplayError(err) });
@@ -259,33 +250,6 @@ export const UserManagementView: React.FC = () => {
     }
   };
 
-  const handleAssignTemporaryPassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!resetPassTarget) return;
-    const cleanTemp = resetTempPassword.trim() || 'LCSCO-2026';
-    localStorage.setItem(`lcsco_pass_${resetPassTarget.uid}`, cleanTemp);
-    localStorage.setItem(`lcsco_must_change_pass_${resetPassTarget.uid}`, 'true');
-
-    if (isPreviewMode) {
-      updatePreviewState({
-        users: allUsers.map((u) =>
-          u.uid === resetPassTarget.uid
-            ? { ...u, password: cleanTemp, mustChangePassword: true }
-            : u
-        ),
-      });
-    }
-
-    setFeedback({
-      type: 'success',
-      message: tr(
-        `Assigned temporary password "${cleanTemp}" to ${resetPassTarget.fullName}. They must change it on their next login.`,
-        `Mot de passe temporaire « ${cleanTemp} » attribué à ${resetPassTarget.fullName}. Il devra être modifié à la prochaine connexion.`
-      ),
-    });
-    setResetPassTarget(null);
-  };
-
   if (!isAdmin) {
     return (
       <div className="p-8 bg-white border border-slate-200 rounded-md text-center space-y-3 max-w-md mx-auto">
@@ -382,22 +346,10 @@ export const UserManagementView: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {allUsers.map((u) => {
                   const isSelf = u.uid === profile?.uid;
-                  const requiresPassChange =
-                    Boolean(u.mustChangePassword) ||
-                    localStorage.getItem(`lcsco_must_change_pass_${u.uid}`) === 'true';
                   return (
                     <tr key={u.uid} className="hover:bg-slate-50">
                       <td className="py-3 px-4 font-semibold text-slate-900">
                         <div>{u.fullName}</div>
-                        {requiresPassChange && (
-                          <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10px] font-medium text-amber-800">
-                            <KeyRound className="w-2.5 h-2.5" />
-                            {tr(
-                              'Temporary password (change required on 1st login)',
-                              'Mot de passe temporaire (changement requis à la 1ère connexion)'
-                            )}
-                          </span>
-                        )}
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-600">
                         {u.email}
@@ -435,19 +387,6 @@ export const UserManagementView: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1.5">
-                          {!isSelf && (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => {
-                                setResetPassTarget(u);
-                                setResetTempPassword(u.password || 'LCSCO-2026');
-                              }}
-                            >
-                              <KeyRound className="w-3 h-3" />
-                              <span>{tr('Temp Password', 'Mot de passe temp.')}</span>
-                            </Button>
-                          )}
                           <Button
                             size="sm"
                             variant="secondary"
@@ -588,21 +527,11 @@ export const UserManagementView: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  {tr('Temporary Password *', 'Mot de passe temporaire *')}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newMemberPassword}
-                  onChange={(e) => setNewMemberPassword(e.target.value)}
-                  className="w-full px-3 py-2 font-mono border border-slate-300 rounded-md"
-                />
-                <p className="mt-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
+                <p className="text-[11px] text-slate-600">
                   {tr(
-                    'The new user will be required to change this temporary password upon their first login.',
-                    'Le nouvel utilisateur devra obligatoirement modifier ce mot de passe temporaire lors de sa première connexion.'
+                    'After creating the profile, add a Firebase Authentication account for this email (Authentication > Users > Add user), or ask them to sign in with Google. Their password is managed by Firebase and never stored in the inventory database.',
+                    'Après la création du profil, ajoutez un compte Firebase Authentication pour cet e-mail (Authentication > Users > Add user), ou invitez-le à se connecter avec Google. Son mot de passe est géré par Firebase et n’est jamais stocké dans la base d’inventaire.'
                   )}
                 </p>
               </div>
@@ -616,62 +545,6 @@ export const UserManagementView: React.FC = () => {
                 </Button>
                 <Button type="submit" variant="primary">
                   {tr('Create Profile', 'Créer le profil')}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ASSIGN TEMPORARY PASSWORD MODAL */}
-      {resetPassTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-md max-w-md w-full p-6 space-y-4 shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h3 className="text-base font-semibold text-slate-900">
-                {tr('Set Temporary Password', 'Définir un mot de passe temporaire')}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setResetPassTarget(null)}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <form onSubmit={handleAssignTemporaryPassword} className="space-y-4 text-xs">
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-md">
-                <div className="font-semibold text-slate-900">{resetPassTarget.fullName}</div>
-                <div className="font-mono text-slate-500">{resetPassTarget.email}</div>
-              </div>
-              <div>
-                <label className="block font-medium text-slate-700 mb-1">
-                  {tr('Temporary Password *', 'Mot de passe temporaire *')}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={resetTempPassword}
-                  onChange={(e) => setResetTempPassword(e.target.value)}
-                  className="w-full px-3 py-2 font-mono border border-slate-300 rounded-md"
-                />
-                <p className="mt-1.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
-                  {tr(
-                    'This user will be required to set a new personal password on their next login.',
-                    'Cet utilisateur devra définir un nouveau mot de passe personnel lors de sa prochaine connexion.'
-                  )}
-                </p>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setResetPassTarget(null)}
-                >
-                  {tr('Cancel', 'Annuler')}
-                </Button>
-                <Button type="submit" variant="primary">
-                  {tr('Assign Temporary Password', 'Attribuer le mot de passe temporaire')}
                 </Button>
               </div>
             </form>

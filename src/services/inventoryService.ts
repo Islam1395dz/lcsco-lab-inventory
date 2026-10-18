@@ -20,8 +20,6 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError } from '../firebase';
 import {
-  INITIAL_DEMO_CONTAINERS,
-  INITIAL_DEMO_PRODUCTS,
   INITIAL_PHYSICAL_LOCATIONS,
 } from '../data/demoInventoryData';
 import {
@@ -716,8 +714,6 @@ export async function createLabMemberProfile(input: {
   role: UserRole;
   laboratoryIds: string[];
   status?: UserStatus;
-  password?: string;
-  mustChangePassword?: boolean;
   actor: TransactionActor;
 }): Promise<string> {
   if (input.actor.role !== UserRole.ADMIN) {
@@ -735,12 +731,9 @@ export async function createLabMemberProfile(input: {
     role: input.role,
     laboratoryIds: input.laboratoryIds.slice(0, SCHEMA_CONSTRAINTS.MAX_LAB_IDS),
     status: input.status || UserStatus.ACTIVE,
-    isDemoAccount: false,
     createdAt: serverTimestamp(),
     lastLogin: serverTimestamp(),
   };
-  if (input.password) payload.password = input.password;
-  if (input.mustChangePassword !== undefined) payload.mustChangePassword = input.mustChangePassword;
 
   try {
     await setDoc(doc(db, 'users', uid), payload);
@@ -820,170 +813,6 @@ export async function updateUserPermissions(params: {
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${targetUid}`);
-  }
-}
-
-/**
- * Deletes all non-temporary user accounts in Firestore and seeds the 4 clean temporary accounts:
- * 1. Director (`temp-director`)
- * 2. Technician (`temp-technician`)
- * 3. Professor (`temp-professor`)
- * 4. PhD Student (`temp-phd-student`)
- */
-export async function resetToFourTemporaryAccounts(currentAuthUid?: string): Promise<void> {
-  try {
-    const existingUsersSnap = await getDocs(collection(db, 'users'));
-    const obsoleteDemoIds = new Set([
-      'temp-technician',
-      'temp-professor',
-      'temp-phd-student',
-    ]);
-
-    for (const userDoc of existingUsersSnap.docs) {
-      if (obsoleteDemoIds.has(userDoc.id) && userDoc.id !== currentAuthUid) {
-        await deleteDoc(doc(db, 'users', userDoc.id));
-      }
-    }
-
-    // Ensure only the single LCSCO laboratory exists in Firestore
-    const existingLabsSnap = await getDocs(collection(db, 'laboratories'));
-    for (const labDoc of existingLabsSnap.docs) {
-      if (labDoc.id !== 'LCSCO') {
-        await deleteDoc(doc(db, 'laboratories', labDoc.id));
-      }
-    }
-    await setDoc(doc(db, 'laboratories', 'LCSCO'), {
-      labId: 'LCSCO',
-      name: 'LCSCO — Laboratoire de Catalyse et Synthèse en Chimie Organique',
-      createdAt: serverTimestamp(),
-    });
-
-    const tempAccounts: Array<{
-      uid: string;
-      fullName: string;
-      email: string;
-      role: UserRole;
-      laboratoryIds: string[];
-    }> = [
-      {
-        uid: 'temp-director',
-        fullName: 'Director',
-        email: 'director@lcsco.dz',
-        role: UserRole.ADMIN,
-        laboratoryIds: ['LCSCO'],
-      },
-      {
-        uid: 'temp-technician',
-        fullName: 'Lab Engineer',
-        email: 'technician@lcsco.dz',
-        role: UserRole.TECHNICIAN,
-        laboratoryIds: ['LCSCO'],
-      },
-      {
-        uid: 'temp-professor',
-        fullName: 'Professor',
-        email: 'professor@lcsco.dz',
-        role: UserRole.PROFESSOR,
-        laboratoryIds: ['LCSCO'],
-      },
-      {
-        uid: 'temp-phd-student',
-        fullName: 'PhD Student',
-        email: 'student@lcsco.dz',
-        role: UserRole.PHD_STUDENT,
-        laboratoryIds: ['LCSCO'],
-      },
-    ];
-
-    for (const acc of tempAccounts) {
-      if (acc.uid !== currentAuthUid) {
-        await setDoc(doc(db, 'users', acc.uid), {
-          uid: acc.uid,
-          fullName: acc.fullName,
-          email: acc.email,
-          role: acc.role,
-          laboratoryIds: acc.laboratoryIds,
-          status: UserStatus.ACTIVE,
-          isDemoAccount: true,
-          createdAt: serverTimestamp(),
-          lastLogin: serverTimestamp(),
-        });
-      }
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'users/resetToFourTemporaryAccounts');
-  }
-}
-
-/**
- * Seeds realistic LCSCO (Laboratoire de Catalyse et Synthèse en Chimie Organique) data
- */
-export async function seedInitialLabInventory(actor: TransactionActor): Promise<void> {
-  try {
-    await setDoc(doc(db, 'laboratories', 'LCSCO'), {
-      labId: 'LCSCO',
-      name: 'LCSCO — Laboratoire de Catalyse et Synthèse en Chimie Organique',
-      createdAt: serverTimestamp(),
-    });
-
-    const existingContainers = await getDocs(collection(db, 'containers'));
-    const existingProducts = await getDocs(collection(db, 'products'));
-
-    const existingContIds = new Set(existingContainers.docs.map((d) => d.id));
-    const existingProdIds = new Set(existingProducts.docs.map((d) => d.id));
-
-    // Never delete old inventory — add new catalog items alongside existing ones
-    const missingProducts = INITIAL_DEMO_PRODUCTS.filter((p) => !existingProdIds.has(p.productId));
-    for (let i = 0; i < missingProducts.length; i += 300) {
-      const batch = writeBatch(db);
-      const chunk = missingProducts.slice(i, i + 300);
-      for (const prod of chunk) {
-        batch.set(doc(db, 'products', prod.productId), {
-          productId: prod.productId,
-          chemicalName: prod.chemicalName,
-          casNumber: prod.casNumber,
-          formula: prod.formula,
-          molecularWeight: prod.molecularWeight,
-          hazardClass: prod.hazardClass,
-          storageRequirements: prod.storageRequirements,
-          defaultUnit: prod.defaultUnit,
-          minimumStock: prod.minimumStock,
-          reorderLevel: prod.reorderLevel,
-          sdsUrl: prod.sdsUrl,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-      await batch.commit();
-    }
-
-    const missingContainers = INITIAL_DEMO_CONTAINERS.filter((c) => !existingContIds.has(c.containerId));
-    for (let i = 0; i < missingContainers.length; i += 300) {
-      const batch = writeBatch(db);
-      const chunk = missingContainers.slice(i, i + 300);
-      for (const cont of chunk) {
-        batch.set(doc(db, 'containers', cont.containerId), {
-          containerId: cont.containerId,
-          productId: cont.productId,
-          laboratoryId: 'LCSCO',
-          initialQuantity: cont.initialQuantity,
-          currentQuantity: cont.currentQuantity,
-          unit: cont.unit,
-          location: toFirestoreLocationMap(cont.location),
-          storageCondition: cont.storageCondition,
-          status: cont.status,
-          lotNumber: cont.lotNumber,
-          supplier: cont.supplier,
-          expiryDate: cont.expiryDate,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdBy: actor.uid,
-        });
-      }
-      await batch.commit();
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'seedInitialLabInventory');
   }
 }
 

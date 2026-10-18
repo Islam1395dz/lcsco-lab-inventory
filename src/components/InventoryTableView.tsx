@@ -37,7 +37,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { extractPhysicalLocationFields } from '../utils/formatters';
 import { calculateWithdrawalMutation } from '../services/inventoryDomain';
 import { withdrawChemicalStock } from '../services/inventoryService';
-import { parseDisplayError } from '../firebase';
+import { getApiAuthToken, parseDisplayError } from '../firebase';
 import {
   Badge,
   Button,
@@ -508,9 +508,13 @@ export const InventoryTableView: React.FC<InventoryTableViewProps> = ({
 
     setImportingInventory(true);
     try {
+      const authToken = await getApiAuthToken();
       const res = await fetch('/api/inventory/import-document', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
         body: JSON.stringify({
           fileBase64: importFileBase64,
           mimeType: importFileMimeType || 'application/pdf',
