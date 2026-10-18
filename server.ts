@@ -38,15 +38,28 @@ import type { Transporter } from 'nodemailer';
 
 let adminAuthInstance: AdminAuth | null = null;
 let adminInitError: string | null = null;
+let adminProjectId = '';
 try {
   // On Render (and other PaaS) a full service-account JSON key can be pasted
   // into the FIREBASE_SERVICE_ACCOUNT_JSON env var. Otherwise we fall back to
   // the standard Google Application Default Credentials chain.
-  const credential = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-    ? cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON))
-    : applicationDefault();
-  const app: AdminApp = initializeAdminApp({ credential });
+  let credential;
+  let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    credential = cert(serviceAccount);
+    // The SDK cannot always infer the project ID from the credential alone and
+    // then falls back to the GCE metadata server, which does not exist on
+    // Render ("Failed to determine project ID ... ENOTFOUND
+    // metadata.google.internal"). Passing it explicitly makes token
+    // verification deterministic.
+    projectId = projectId || serviceAccount.project_id || '';
+  } else {
+    credential = applicationDefault();
+  }
+  const app: AdminApp = initializeAdminApp(projectId ? { credential, projectId } : { credential });
   adminAuthInstance = getAdminAuth(app);
+  adminProjectId = app.options.projectId || projectId || '';
 } catch (err) {
   adminInitError = err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160);
   console.error(
@@ -357,6 +370,7 @@ async function startServer() {
       // Non-sensitive operator diagnostics: lets the Director confirm at a
       // glance whether privileged endpoints can work.
       admin: adminAuthInstance ? 'ready' : 'unavailable',
+      adminProjectId: adminProjectId || null,
       adminError: adminAuthInstance ? null : adminInitError,
       mail: mailer ? 'ready' : 'unavailable',
       origins: (process.env.APP_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
