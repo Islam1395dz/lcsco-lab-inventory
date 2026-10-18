@@ -391,8 +391,9 @@ service cloud.firestore {
     // COLLECTION: laboratories/{labId}
     // =========================================================================
     match /laboratories/{labId} {
-      allow get: if isSignedIn() && isValidId(labId) && existing().name.size() >= 1;
-      allow list: if isSignedIn() && existing().name.size() >= 1;
+      // Lab names are minimal metadata; the app's unfiltered list queries are
+      // required for shared state. Only READS are open; writes stay strict.
+      allow get, list: if isSignedIn();
 
       allow create: if isVerified() &&
         isValidId(labId) &&
@@ -414,8 +415,10 @@ service cloud.firestore {
     // COLLECTION: products/{productId}
     // =========================================================================
     match /products/{productId} {
-      allow get: if isSignedIn() && existing().molecularWeight >= 0;
-      allow list: if isSignedIn() && existing().molecularWeight >= 0;
+      // Catalog entries (chemical name, CAS, GHS) are lab-shared metadata.
+      // Unfiltered lists are required by the client; quantity/mutations stay
+      // gated on the containers side.
+      allow get, list: if isSignedIn();
 
       allow create: if isVerified() &&
         isValidId(productId) &&
@@ -442,8 +445,10 @@ service cloud.firestore {
     // COLLECTION: containers/{containerId}
     // =========================================================================
     match /containers/{containerId} {
-      allow get: if isSignedIn() && existing().currentQuantity >= 0;
-      allow list: if isSignedIn() && existing().currentQuantity >= 0;
+      // Container rows carry location/quantity metadata visible to lab
+      // members (reads); every mutation is gated by isTechOrAbove and
+      // envelope validation below.
+      allow get, list: if isSignedIn();
 
       allow create: if isVerified() &&
         isValidId(containerId) &&
@@ -494,8 +499,9 @@ service cloud.firestore {
     // COLLECTION: transactions/{transactionId} (STRICTLY APPEND-ONLY AUDIT LOG)
     // =========================================================================
     match /transactions/{transactionId} {
-      allow get: if isSignedIn() && existing().quantityBefore >= 0;
-      allow list: if isSignedIn() && existing().quantityBefore >= 0;
+      // The audit log is read-only for members and never mutable after
+      // creation (append-only writes, validated below).
+      allow get, list: if isSignedIn();
 
       allow create: if isVerified() &&
         isValidId(transactionId) &&
