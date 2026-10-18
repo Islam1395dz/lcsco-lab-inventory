@@ -104,7 +104,7 @@ import {
   INITIAL_PHYSICAL_LOCATIONS,
 } from '../data/demoInventoryData';
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'director@lcsco.dz';
+const BOOTSTRAPPED_ADMIN_EMAIL = 'islam.hasnaoui13@gmail.com';
 
 /** Offline/preview fallback identity used only when no one is signed in. */
 const PREVIEW_DEFAULT_PROFILE: UserProfile = {
