@@ -962,7 +962,17 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.warn('Google popup sign-in encountered an issue:', err);
-      if (err?.code === 'auth/popup-blocked' || err?.code === 'auth/cancelled-popup-request') {
+      // Popup flows are commonly killed by ad blockers, extensions, or
+      // third-party-cookie policies. Fall back to the full-page redirect
+      // flow, whose result is picked up by the onAuthStateChanged listener.
+      const popupFailureCodes = [
+        'auth/popup-blocked',
+        'auth/cancelled-popup-request',
+        'auth/popup-closed-by-user',
+        'auth/popup-network-error',
+        'auth/popup-timed-out',
+      ];
+      if (err?.code && popupFailureCodes.includes(err.code)) {
         try {
           await signInWithRedirect(auth, googleProvider);
           return;
