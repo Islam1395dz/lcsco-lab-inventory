@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   User as FirebaseUser,
   getRedirectResult,
@@ -25,7 +25,8 @@ import {
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, parseDisplayError } from '../firebase';
 import { useLanguage } from './LanguageContext';
-import { completeOnboardingPasswordChange } from '../services/adminAccountService';
+import { completeOnboardingPasswordChange, importReferenceInventory } from '../services/adminAccountService';
+import type { ReferenceInventoryImportResult } from '../services/adminAccountService';
 import {
   AppNotification,
   ChemicalContainer,
@@ -125,6 +126,12 @@ export const BOOTSTRAP_ADMIN_EMAIL = BOOTSTRAPPED_ADMIN_EMAIL;
 export const PREVIEW_PROFILE = PREVIEW_DEFAULT_PROFILE;
 
 const SHARED_STORAGE_KEY = 'lcsco_shared_inventory_state_v11';
+
+/**
+ * Browser-local flag: the official reference inventory has already been pushed
+ * into the live database from this browser (see the import effect below).
+ */
+const REFERENCE_IMPORT_STORAGE_KEY = 'lcsco_reference_inventory_import_v1';
 
 const INITIAL_PREVIEW_LABS: Laboratory[] = [
   {
@@ -848,6 +855,52 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       unsubUsers();
     };
   }, [authReady, firebaseUser, profile?.uid]);
+
+  // 4. One-time reference-inventory import (Director only).
+  // A freshly created project has an empty database, while the laboratory's
+  // official inventory (cabinets, reagents and their physical placement) ships
+  // with the app as reference data. On the Director's first sign-in the app
+  // hands that reference data to the server, which writes it with the Admin SDK
+  // so the strict per-document client rules are not in the bulk-import path.
+  // Guarded per browser, and the server only imports each slice once.
+  const referenceImportAttempted = useRef(false);
+  useEffect(() => {
+    if (!authReady || !profile || dataLoading) return;
+    if (profile.role !== UserRole.ADMIN) return;
+    if (referenceImportAttempted.current) return;
+    let alreadyImported = false;
+    try {
+      alreadyImported = window.localStorage.getItem(REFERENCE_IMPORT_STORAGE_KEY) === 'done';
+    } catch {
+      // Private browsing modes can deny storage access; importing is still safe
+      // because the server only imports each slice once.
+    }
+    if (alreadyImported) return;
+    referenceImportAttempted.current = true;
+    void (async () => {
+      try {
+        const results: ReferenceInventoryImportResult[] = [
+          await importReferenceInventory('locations', INITIAL_PHYSICAL_LOCATIONS),
+          await importReferenceInventory('products', INITIAL_DEMO_PRODUCTS),
+          await importReferenceInventory('containers', INITIAL_DEMO_CONTAINERS),
+        ];
+        try {
+          window.localStorage.setItem(REFERENCE_IMPORT_STORAGE_KEY, 'done');
+        } catch {
+          // The import itself succeeded; a storage failure must not undo that.
+        }
+        console.info(
+          '[reference-inventory] import finished — ' +
+            results
+              .map((r) => `${r.kind}: ${r.written}${r.skipped ? ' (already populated)' : ''}`)
+              .join(', ')
+        );
+      } catch (err) {
+        // Non-fatal: the app keeps working with whatever has already been imported.
+        console.warn('[reference-inventory] import failed', err);
+      }
+    })();
+  }, [authReady, profile, dataLoading]);
 
   const effectiveProfile: UserProfile | null =
     profile || (isPreviewMode ? previewProfile : null);

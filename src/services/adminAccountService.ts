@@ -74,3 +74,33 @@ export async function deleteLabMemberAccount(targetUid: string): Promise<{ succe
 export async function completeOnboardingPasswordChange(): Promise<{ success: boolean }> {
   return adminApiFetch<{ success: boolean }>('/api/admin/complete-password-change', {});
 }
+
+/** Which slice of the official reference inventory to import. */
+export type ReferenceInventoryKind = 'locations' | 'products' | 'containers';
+
+export interface ReferenceInventoryImportResult {
+  kind: string;
+  /** Number of documents actually written (0 when the slice was skipped). */
+  written: number;
+  /** True when the target collection already held data and nothing was written. */
+  skipped: boolean;
+  reason?: string;
+}
+
+/**
+ * Materialises one slice of the laboratory's official reference inventory
+ * (the 21-page cabinet/reagent inventory) into the live database. The server
+ * writes with the Admin SDK, so the strict per-document client rules are not in
+ * the bulk-import path. Idempotent per collection unless `force` is set.
+ */
+export async function importReferenceInventory(
+  kind: ReferenceInventoryKind,
+  items: unknown[],
+  force = false
+): Promise<ReferenceInventoryImportResult> {
+  return adminApiFetch<ReferenceInventoryImportResult>('/api/admin/seed-inventory', {
+    kind,
+    items,
+    force,
+  });
+}

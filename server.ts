@@ -332,7 +332,9 @@ async function startServer() {
     }
     next();
   });
-  app.use(express.json({ limit: '100kb' }));
+  // 2 MB accommodates the reference-inventory import payload (hundreds of
+  // documents) while everything else stays comfortably below it.
+  app.use(express.json({ limit: '2mb' }));
 
   const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -683,6 +685,125 @@ CRITICAL FORMATTING RULES:
       } catch (err: any) {
         console.error('[complete-password-change] failed', { ip: req.ip, message: err?.message });
         res.status(500).json({ error: 'Failed to record the password change.' });
+      }
+    }
+  );
+
+  /**
+   * ========================================================================
+   * REFERENCE INVENTORY IMPORT
+   * ========================================================================
+   * The laboratory's official inventory (29 cabinets + 853 reagents with their
+   * physical placement) ships with the client as reference data — see
+   * src/data/demoInventoryData.ts. A brand-new Firestore starts empty, so the
+   * Director can materialise that reference inventory into the live database in
+   * three authenticated calls ("locations", then "products", then "containers").
+   *
+   * Writes go through the Admin SDK, which keeps the strict client write rules
+   * (and their per-document `exists()` reads) out of the bulk-import path. Each
+   * slice is imported once: a marker document records completed slices, so
+   * re-running resumes an interrupted import instead of duplicating documents,
+   * and { force: true } re-imports deliberately.
+   * ======================================================================== */
+  const SEED_COLLECTIONS: Record<string, { collection: string; idField: string }> = {
+    locations: { collection: 'physicalLocations', idField: 'id' },
+    products: { collection: 'products', idField: 'productId' },
+    containers: { collection: 'containers', idField: 'containerId' },
+  };
+
+  app.post(
+    '/api/admin/seed-inventory',
+    globalLimiter,
+    adminActionLimiter,
+    requireAuth,
+    requireRole('ADMIN'),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+          return;
+        }
+        const kind = String(req.body?.kind || '');
+        const items = req.body?.items;
+        const force = req.body?.force === true;
+        const target = SEED_COLLECTIONS[kind];
+        if (!target) {
+          res.status(400).json({ error: 'kind must be one of: locations, products, containers.' });
+          return;
+        }
+        if (!Array.isArray(items) || items.length === 0 || items.length > 2000) {
+          res.status(400).json({ error: 'items must be an array of 1–2000 documents.' });
+          return;
+        }
+
+        const firestore = getAdminFirestore();
+        // A marker records which slices were imported *completely*, so an
+        // interrupted import can be resumed (documents carry deterministic IDs,
+        // therefore re-running overwrites the same documents instead of
+        // duplicating them). Without the marker, a half-written collection
+        // would otherwise be treated as "already imported" forever.
+        const markerRef = firestore.doc('systemSettings/referenceInventory');
+        const markerSnap = await markerRef.get();
+        const marker = (markerSnap.exists ? markerSnap.data() : {}) as Record<string, unknown>;
+        if (!force && marker[kind] === true) {
+          res.json({
+            kind,
+            written: 0,
+            skipped: true,
+            reason: `The ${kind} slice of the reference inventory was already imported.`,
+          });
+          return;
+        }
+
+        // Chunked to stay under Firestore's 500-operations-per-batch limit.
+        let written = 0;
+        for (let offset = 0; offset < items.length; offset += 400) {
+          const batch = firestore.batch();
+          for (const raw of items.slice(offset, offset + 400)) {
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+            const document: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+            const documentId = String(document[target.idField] || '');
+            // Document IDs come from the reference data itself; skip malformed rows.
+            if (!documentId || documentId.length > 120 || !/^[a-zA-Z0-9_-]+$/.test(documentId)) {
+              continue;
+            }
+            // Container rows are owned by the Director who performed the import;
+            // the field is mandatory in the schema and drives the audit trail.
+            if (kind === 'containers') {
+              document.createdBy = req.user?.uid || 'reference-import';
+            }
+            batch.set(firestore.collection(target.collection).doc(documentId), document, {
+              merge: true,
+            });
+            written += 1;
+          }
+          await batch.commit();
+        }
+
+        // Every reagent references the laboratory it belongs to.
+        if (kind === 'locations') {
+          await firestore
+            .doc('laboratories/LCSCO')
+            .set(
+              {
+                labId: 'LCSCO',
+                name: 'LCSCO — Laboratoire de Catalyse et Synthèse en Chimie Organique',
+                createdAt: new Date(),
+              },
+              { merge: true }
+            );
+        }
+
+        await markerRef.set(
+          { [kind]: true, updatedAt: new Date(), importedBy: req.user?.email || null },
+          { merge: true }
+        );
+
+        console.log(`[seed-inventory] ${kind}: ${written} document(s) by ${req.user?.email}`);
+        res.json({ kind, written, skipped: false });
+      } catch (err: any) {
+        console.error('[seed-inventory] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to import the reference inventory.' });
       }
     }
   );
