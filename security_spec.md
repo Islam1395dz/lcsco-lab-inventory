@@ -156,8 +156,9 @@ Account lifecycle is additionally controlled through Admin-SDK endpoints (auth-g
 - `POST /api/admin/create-user` — creates the Firebase Auth account with a
   **server-generated random temporary password**, writes the profile document,
   and emails a welcome message (username + temporary password + a notice that
-  the password must be replaced at first login) via SMTP. The temporary password
-  is returned **once** to the Director as a fallback; it is never persisted.
+  the password must be replaced at first login) through Resend or SMTP. The
+  temporary password is returned **once** to the Director as a fallback; it is
+  never persisted.
 - `POST /api/admin/delete-user` — deletes the Auth account *and* the profile
   document together (self-deletion prohibited).
 - `POST /api/admin/complete-password-change` — called with the *user's own* token

@@ -220,15 +220,25 @@ function originAllowed(origin: string | undefined, requestHost: string | undefin
 }
 
 /* ============================================================================
- * Mailer (nodemailer SMTP)
+ * Mailer
  *
  * Used to deliver welcome emails with one-time temporary passwords when the
- * Director provisions a new lab member. Configure via env:
- *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM
+ * Director provisions a new lab member. Two transports, in priority order:
+ *
+ *   1. Resend HTTP API  — RESEND_API_KEY (plain HTTP, no SDK dependency).
+ *   2. SMTP (nodemailer) — SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
+ *
+ * MAIL_FROM overrides the sender identity for both. Note that Resend's shared
+ * onboarding@resend.dev sender only delivers to the Resend account's own
+ * address; an arbitrary recipient requires a verified domain (resend.com/domains)
+ * and a MAIL_FROM using it.
  * ========================================================================== */
+const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim();
+const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+
 let mailer: Transporter | null = null;
 try {
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  if (!RESEND_API_KEY && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     mailer = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
@@ -242,14 +252,89 @@ try {
       () => console.log('[Mailer] SMTP connection verified.'),
       (err) => console.warn('[Mailer] SMTP verify failed:', err instanceof Error ? err.message : err)
     );
-  } else {
-    console.warn(
-      '[Mailer] SMTP not configured (SMTP_HOST/SMTP_USER/SMTP_PASS). ' +
-        'Welcome emails will be skipped; the temporary password is returned to the Director instead.'
-    );
   }
 } catch (err) {
   console.warn('[Mailer] initialization failed:', err instanceof Error ? err.message : err);
+}
+
+type MailTransport = 'resend' | 'smtp' | 'none';
+
+function mailTransport(): MailTransport {
+  if (RESEND_API_KEY) return 'resend';
+  if (mailer) return 'smtp';
+  return 'none';
+}
+
+function mailFrom(): string {
+  return process.env.MAIL_FROM || 'LCSCO Inventory <onboarding@resend.dev>';
+}
+
+if (mailTransport() === 'none') {
+  console.warn(
+    '[Mailer] No mail transport configured (RESEND_API_KEY or SMTP_HOST/SMTP_USER/SMTP_PASS). ' +
+      'Welcome emails will be skipped; the temporary password is returned to the Director instead.'
+  );
+} else {
+  console.log(`[Mailer] transport: ${mailTransport()}`);
+}
+
+interface OutgoingMail {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/**
+ * Sends one message and never throws: account provisioning must succeed even
+ * when the mail provider is down (the Director still sees the temporary
+ * password and can pass it on).
+ */
+async function deliverMail(mail: OutgoingMail): Promise<boolean> {
+  const from = mailFrom();
+  if (RESEND_API_KEY) {
+    try {
+      const response = await fetch(RESEND_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [mail.to],
+          subject: mail.subject,
+          text: mail.text,
+          html: mail.html,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.warn('[Mailer] Resend rejected the message:', response.status, detail.slice(0, 300));
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('[Mailer] Resend send failed:', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+  if (mailer) {
+    try {
+      await mailer.sendMail({
+        from,
+        to: mail.to,
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      return true;
+    } catch (err) {
+      console.warn('[Mailer] SMTP send failed:', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+  return false;
 }
 
 /* ============================================================================
@@ -267,51 +352,42 @@ function generateTemporaryPassword(length = 14): string {
 }
 
 async function sendWelcomeEmail(to: string, tempPassword: string, requestBaseUrl?: string): Promise<boolean> {
-  if (!mailer) return false;
+  if (mailTransport() === 'none') return false;
   // Prefer the host the Director is actually using, then APP_URL, so the link
   // keeps working if the service is ever renamed or moved.
   const appUrl =
     (requestBaseUrl && requestBaseUrl.replace(/\/$/, '')) ||
     (process.env.APP_URL || '').split(',')[0]?.trim().replace(/\/$/, '') ||
-    'https://lcsco-lab-inventory.onrender.com';
-  try {
-    await mailer.sendMail({
-      from: process.env.MAIL_FROM || 'LCSCO Inventory <no-reply@lcsco.dz>',
-      to,
-      subject: 'Your LCSCO Inventory account — first login',
-      text:
-        `Welcome to LCSCO Inventory (Laboratoire de Catalyse et Synthèse en Chimie Organique).\n\n` +
-        `Your account has been created by the Laboratory Director.\n\n` +
-        `Username (email): ${to}\n` +
-        `Temporary password: ${tempPassword}\n\n` +
-        `Sign in at: ${appUrl}\n\n` +
-        `IMPORTANT — SECURITY: you will be required to choose your own personal\n` +
-        `password on your first login. This temporary password stops working as\n` +
-        `soon as you complete that first-login change.\n\n` +
-        `If you did not expect this email, contact the Laboratory Director.`,
-      html:
-        `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;">
-          <h2 style="color:#1B8A2A;">Welcome to LCSCO Inventory</h2>
-          <p>Welcome to the <b>Laboratoire de Catalyse et Synthèse en Chimie Organique</b> chemical inventory system.</p>
-          <p>Your account has been created by the Laboratory Director:</p>
-          <table style="border-collapse:collapse;background:#F8FAFC;border:1px solid #CBD5E1;border-radius:6px;">
-            <tr><td style="padding:8px 14px;font-weight:bold;">Username (email)</td><td style="padding:8px 14px;font-family:monospace;">${to}</td></tr>
-            <tr><td style="padding:8px 14px;font-weight:bold;">Temporary password</td><td style="padding:8px 14px;font-family:monospace;">${tempPassword}</td></tr>
-          </table>
-          <p style="margin-top:16px;">
-            <a href="${appUrl}" style="background:#1B8A2A;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;">Sign in to LCSCO Inventory</a>
-          </p>
-          <p style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;font-size:13px;">
-            <b>Security:</b> on your first login you will be required to choose your own personal password. This temporary password stops working as soon as you complete that first-login change.
-          </p>
-          <p style="font-size:12px;color:#64748B;">If you did not expect this email, contact the Laboratory Director.</p>
-        </div>`,
-    });
-    return true;
-  } catch (err) {
-    console.warn('[Mailer] send failed:', err instanceof Error ? err.message : err);
-    return false;
-  }
+    'https://lcsco-lab-inventory-guw7.onrender.com';
+  const subject = 'Your LCSCO Inventory account — first login';
+  const text =
+    `Welcome to LCSCO Inventory (Laboratoire de Catalyse et Synthèse en Chimie Organique).\n\n` +
+    `Your account has been created by the Laboratory Director.\n\n` +
+    `Username (email): ${to}\n` +
+    `Temporary password: ${tempPassword}\n\n` +
+    `Sign in at: ${appUrl}\n\n` +
+    `IMPORTANT — SECURITY: you will be required to choose your own personal\n` +
+    `password on your first login. This temporary password stops working as\n` +
+    `soon as you complete that first-login change.\n\n` +
+    `If you did not expect this email, contact the Laboratory Director.`;
+  const html =
+    `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;">
+      <h2 style="color:#1B8A2A;">Welcome to LCSCO Inventory</h2>
+      <p>Welcome to the <b>Laboratoire de Catalyse et Synthèse en Chimie Organique</b> chemical inventory system.</p>
+      <p>Your account has been created by the Laboratory Director:</p>
+      <table style="border-collapse:collapse;background:#F8FAFC;border:1px solid #CBD5E1;border-radius:6px;">
+        <tr><td style="padding:8px 14px;font-weight:bold;">Username (email)</td><td style="padding:8px 14px;font-family:monospace;">${to}</td></tr>
+        <tr><td style="padding:8px 14px;font-weight:bold;">Temporary password</td><td style="padding:8px 14px;font-family:monospace;">${tempPassword}</td></tr>
+      </table>
+      <p style="margin-top:16px;">
+        <a href="${appUrl}" style="background:#1B8A2A;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;">Sign in to LCSCO Inventory</a>
+      </p>
+      <p style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;font-size:13px;">
+        <b>Security:</b> on your first login you will be required to choose your own personal password. This temporary password stops working as soon as you complete that first-login change.
+      </p>
+      <p style="font-size:12px;color:#64748B;">If you did not expect this email, contact the Laboratory Director.</p>
+    </div>`;
+  return deliverMail({ to, subject, text, html });
 }
 
 async function startServer() {
@@ -374,7 +450,8 @@ async function startServer() {
       admin: adminAuthInstance ? 'ready' : 'unavailable',
       adminProjectId: adminProjectId || null,
       adminError: adminAuthInstance ? null : adminInitError,
-      mail: mailer ? 'ready' : 'unavailable',
+      mail: mailTransport() === 'none' ? 'unavailable' : 'ready',
+      mailTransport: mailTransport(),
       origins: (process.env.APP_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
     });
   });
