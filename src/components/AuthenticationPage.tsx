@@ -17,9 +17,10 @@ import { LCSCOLogo } from './LCSCOLogo';
 /**
  * Sign-in page.
  *
- * Authentication is delegated entirely to Firebase Auth:
- *  - Email / password accounts (verification handled by Firebase)
- *  - Google accounts
+ * Authentication is delegated entirely to Firebase Auth email/password
+ * accounts. Google sign-in was removed by design: every account is created by
+ * the Laboratory Director (who receives/forwards credentials via the
+ * welcome-email flow), so nobody can appear unprovisioned.
  *
  * There is no local, plaintext credential comparison, and no anonymous
  * sign-in. Roles are granted by an administrator, never chosen at login.
@@ -27,7 +28,6 @@ import { LCSCOLogo } from './LCSCOLogo';
 export const AuthenticationPage: React.FC = () => {
   const {
     signInWithEmailAndPasswordFlow,
-    signInWithGoogle,
     error,
     clearError,
   } = useInventoryContext();
@@ -101,18 +101,6 @@ export const AuthenticationPage: React.FC = () => {
           )
         );
       }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setLocalAuthError(null);
-    setSubmitting(true);
-    try {
-      await signInWithGoogle();
-    } catch {
-      // Error surfaced through the shared context banner.
     } finally {
       setSubmitting(false);
     }
@@ -227,19 +215,16 @@ export const AuthenticationPage: React.FC = () => {
           <div className="relative py-1 flex items-center justify-center">
             <span className="absolute inset-x-0 top-1/2 h-px bg-slate-200" />
             <span className="relative bg-white px-3 text-[10px] font-mono font-semibold text-slate-400">
-              {tr('OR', 'OU')}
+              {tr('Laboratory accounts only', 'Comptes du laboratoire uniquement')}
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            disabled={submitting}
-            className="w-full py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
-          >
-            <GoogleIcon />
-            <span>{tr('Continue with Google', 'Continuer avec Google')}</span>
-          </button>
+          <p className="text-center text-[11px] text-slate-500">
+            {tr(
+              'Accounts are created by the Laboratory Director. Ask them to add you from the Users administration screen — a welcome email with your temporary password will be sent to you.',
+              "Les comptes sont créés par le Directeur du laboratoire. Demandez-lui de vous ajouter depuis l'écran d'administration des Utilisateurs — un e-mail de bienvenue avec votre mot de passe temporaire vous sera envoyé."
+            )}
+          </p>
         </div>
 
         <p className="text-center text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
@@ -265,26 +250,5 @@ const LockIcon = () => (
   >
     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-  </svg>
-);
-
-const GoogleIcon = () => (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-    <path
-      fill="#4285F4"
-      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
-    />
-    <path
-      fill="#34A853"
-      d="M12 23c2.97 0 5.46-.98 7.28-2.65l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H1.07v2.05A11 11 0 0 0 12 23Z"
-    />
-    <path
-      fill="#FBBC05"
-      d="M3.49 13.11A6.6 6.6 0 0 1 3.14 11c0-.73.13-1.44.35-2.11V6.84H1.07a11 11 0 0 0 0 9.89l2.42-1.62Z"
-    />
-    <path
-      fill="#EA4335"
-      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 1.07 6.84l2.42 1.62C4.71 5.9 8.14 5.38 12 5.38Z"
-    />
   </svg>
 );
