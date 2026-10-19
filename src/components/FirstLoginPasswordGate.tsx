@@ -51,8 +51,8 @@ export const FirstLoginPasswordGate: React.FC = () => {
           </h1>
           <p className="text-xs text-slate-500">
             {tr(
-              'Your account was created with a temporary password sent by email. For security, choose your own personal password now — the temporary one stops working as soon as you do.',
-              'Votre compte a été créé avec un mot de passe temporaire envoyé par e-mail. Pour la sécurité, choisissez maintenant votre propre mot de passe personnel — le temporaire cessera de fonctionner dès la modification.'
+              'Your account is ready. For security, set your personal password now — it is the one you will use for every future login.',
+              'Votre compte est prêt. Pour la sécurité, définissez maintenant votre mot de passe personnel — ce sera celui de vos prochaines connexions.'
             )}
           </p>
         </div>

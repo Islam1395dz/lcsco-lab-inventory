@@ -1,4 +1,5 @@
-import { getApiAuthToken } from '../firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth, getApiAuthToken } from '../firebase';
 
 /**
  * Client for the Director-controlled account-provisioning API (server.ts).
@@ -18,6 +19,12 @@ export interface ProvisionedAccount {
   emailSent: boolean;
   /** Provider-side reason when the welcome email could not be delivered. */
   emailError?: string;
+  /**
+   * How the invitation reached the member: `welcome` means the server emailed
+   * the temporary password; `setup-link` means Firebase emailed a link the
+   * member uses to choose their own password.
+   */
+  emailMode?: 'welcome' | 'setup-link';
 }
 
 async function adminApiFetch<T>(path: string, body: unknown): Promise<T> {
@@ -46,6 +53,56 @@ async function adminApiFetch<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
+ * Sends Firebase's built-in "reset your password" email and reuses it as the
+ * account-setup link. Google delivers it from the project's firebaseapp.com
+ * domain to any address, so invitations work without an external mail provider,
+ * a verified custom domain, or SMTP — all of which are unavailable on Render
+ * Free (SMTP ports blocked) or require domain ownership neither is available.
+ */
+export async function sendAccountSetupEmail(email: string): Promise<{ sent: boolean; error?: string }> {
+  const address = email.trim();
+  if (!address) return { sent: false, error: 'No email address to send to.' };
+  try {
+    await sendPasswordResetEmail(auth, address, {
+      url: `${window.location.origin}/`,
+      handleCodeInApp: false,
+    });
+    return { sent: true };
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code || '';
+    const message = err instanceof Error ? err.message : String(err);
+    if (code === 'auth/too-many-requests') {
+      return {
+        sent: false,
+        error: 'Firebase rate-limited the invitation email — try again in a few minutes.',
+      };
+    }
+    if (code === 'auth/unauthorized-continue-uri') {
+      return {
+        sent: false,
+        error: 'This domain is not authorized in Firebase Authentication settings.',
+      };
+    }
+    return { sent: false, error: `Firebase: ${message.slice(0, 300)}` };
+  }
+}
+
+/**
+ * The server tries its configured mail provider first (welcome email with the
+ * temporary password). When that provider is unavailable — for example while
+ * the Brevo key is not set — Google's built-in email is used instead so the
+ * member still receives a working invitation.
+ */
+async function ensureInviteDelivered(account: ProvisionedAccount): Promise<ProvisionedAccount> {
+  if (account.emailSent) return account;
+  const invite = await sendAccountSetupEmail(account.email);
+  if (invite.sent) {
+    return { ...account, emailSent: true, emailError: undefined, emailMode: 'setup-link' };
+  }
+  return { ...account, emailError: invite.error || account.emailError };
+}
+
+/**
  * Creates a real Firebase Auth account (email + server-generated temporary
  * password), its Firestore profile, and emails the welcome message with the
  * first-login credentials to the new member.
@@ -56,7 +113,8 @@ export async function provisionLabMemberAccount(input: {
   role: string;
   laboratoryIds: string[];
 }): Promise<ProvisionedAccount> {
-  return adminApiFetch<ProvisionedAccount>('/api/admin/create-user', input);
+  const provisioned = await adminApiFetch<ProvisionedAccount>('/api/admin/create-user', input);
+  return ensureInviteDelivered(provisioned);
 }
 
 /**
@@ -83,7 +141,8 @@ export async function completeOnboardingPasswordChange(): Promise<{ success: boo
  * members who already replaced their temporary password.
  */
 export async function resendWelcomeEmail(targetUid: string): Promise<ProvisionedAccount> {
-  return adminApiFetch<ProvisionedAccount>('/api/admin/resend-welcome', { targetUid });
+  const reissued = await adminApiFetch<ProvisionedAccount>('/api/admin/resend-welcome', { targetUid });
+  return ensureInviteDelivered(reissued);
 }
 
 /** Which slice of the official reference inventory to import. */

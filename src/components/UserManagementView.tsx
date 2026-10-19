@@ -687,10 +687,15 @@ export const UserManagementView: React.FC = () => {
               <MailCheck className="w-4 h-4 text-emerald-600 mt-0.5" />
               <p className="text-[11px] text-emerald-900">
                 {provisionedAccount.emailSent
-                  ? tr(
-                      `A welcome email was delivered to ${provisionedAccount.email} with their username and temporary password.`,
-                      `Un e-mail de bienvenue a été envoyé à ${provisionedAccount.email} avec son identifiant et son mot de passe temporaire.`
-                    )
+                  ? provisionedAccount.emailMode === 'setup-link'
+                    ? tr(
+                        `An invitation was emailed to ${provisionedAccount.email} by Firebase. It contains a link the member uses to choose a personal password.`,
+                        `Une invitation a été envoyée à ${provisionedAccount.email} par Firebase. Elle contient un lien permettant au membre de choisir un mot de passe personnel.`
+                      )
+                    : tr(
+                        `A welcome email was delivered to ${provisionedAccount.email} with their username and temporary password.`,
+                        `Un e-mail de bienvenue a été envoyé à ${provisionedAccount.email} avec son identifiant et son mot de passe temporaire.`
+                      )
                   : tr(
                       'The welcome email could not be delivered — copy the temporary password below and send it to the member yourself. They will replace it on first login.',
                       "L'e-mail de bienvenue n'a pas pu être envoyé — copiez le mot de passe temporaire ci-dessous et transmettez-le au membre. Il sera remplacé à la première connexion."
