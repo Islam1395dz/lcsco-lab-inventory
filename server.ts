@@ -247,6 +247,11 @@ const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim();
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim();
 const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email';
+// Google Apps Script web app (see docs/apps-script-mail-relay.js). Sends through
+// the laboratory's Gmail account over HTTPS, which is the only outbound path
+// Render's free plan allows (SMTP ports 25/465/587 are blocked there).
+const APPS_SCRIPT_MAIL_URL = (process.env.APPS_SCRIPT_MAIL_URL || '').trim();
+const APPS_SCRIPT_MAIL_SECRET = (process.env.APPS_SCRIPT_MAIL_SECRET || '').trim();
 const MAIL_TRANSPORT_PREFERENCE = (process.env.MAIL_TRANSPORT || '').trim().toLowerCase();
 
 let mailer: Transporter | null = null;
@@ -270,12 +275,20 @@ try {
   console.warn('[Mailer] initialization failed:', err instanceof Error ? err.message : err);
 }
 
-type MailTransport = 'resend' | 'brevo' | 'smtp' | 'none';
+type MailTransport = 'appsscript' | 'resend' | 'brevo' | 'smtp' | 'none';
+
+function relayConfigured(): boolean {
+  return Boolean(APPS_SCRIPT_MAIL_URL && APPS_SCRIPT_MAIL_SECRET);
+}
 
 function mailTransport(): MailTransport {
+  if (MAIL_TRANSPORT_PREFERENCE === 'appsscript' && relayConfigured()) return 'appsscript';
   if (MAIL_TRANSPORT_PREFERENCE === 'smtp' && mailer) return 'smtp';
   if (MAIL_TRANSPORT_PREFERENCE === 'resend' && RESEND_API_KEY) return 'resend';
   if (MAIL_TRANSPORT_PREFERENCE === 'brevo' && BREVO_API_KEY) return 'brevo';
+  // The relay is preferred by default: it is the only transport proven to work
+  // from the Render Free plan and it can reach any recipient address.
+  if (relayConfigured()) return 'appsscript';
   if (RESEND_API_KEY) return 'resend';
   if (BREVO_API_KEY) return 'brevo';
   if (mailer) return 'smtp';
@@ -330,6 +343,40 @@ interface MailResult {
 async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
   const from = mailFrom();
   const transport = mailTransport();
+  if (transport === 'appsscript') {
+    try {
+      const response = await fetch(APPS_SCRIPT_MAIL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: APPS_SCRIPT_MAIL_SECRET,
+          to: mail.to,
+          subject: mail.subject,
+          html: mail.html,
+          text: mail.text,
+        }),
+      });
+      const raw = await response.text().catch(() => '');
+      let parsed: { ok?: boolean; error?: string } | null = null;
+      try {
+        parsed = raw ? JSON.parse(raw) : null;
+      } catch {
+        parsed = null;
+      }
+      if (!response.ok || !parsed || parsed.ok !== true) {
+        const reason = parsed && parsed.error
+          ? `Mail relay: ${parsed.error}`
+          : `Mail relay rejected the message (HTTP ${response.status}).`;
+        console.warn('[Mailer] relay rejected the message:', response.status, raw.slice(0, 200));
+        return { sent: false, error: reason.slice(0, 300) };
+      }
+      return { sent: true };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn('[Mailer] relay send failed:', reason);
+      return { sent: false, error: `Mail relay: ${reason.slice(0, 300)}` };
+    }
+  }
   if (transport === 'resend') {
     try {
       const response = await fetch(RESEND_ENDPOINT, {
@@ -439,10 +486,39 @@ function generateTemporaryPassword(length = 14): string {
   return out;
 }
 
+/** Escapes user-supplied values before they are interpolated into the email HTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Builds the "choose your password" link that goes in the welcome email. This
+ * is the same single-use link Firebase would send in its own reset email, but
+ * embedded in our branded message together with the temporary password.
+ */
+async function createPasswordSetupLink(email: string, continueUrl?: string): Promise<string | null> {
+  if (!adminAuthInstance) return null;
+  try {
+    const settings = continueUrl ? { url: continueUrl } : undefined;
+    return await adminAuthInstance.generatePasswordResetLink(email, settings);
+  } catch (err) {
+    console.warn(
+      '[Mailer] could not create a password setup link:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
 async function sendWelcomeEmail(
   to: string,
   tempPassword: string,
-  requestBaseUrl?: string
+  requestBaseUrl?: string,
+  setupLink?: string | null
 ): Promise<MailResult> {
   if (mailTransport() === 'none') {
     return { sent: false, error: 'No mail transport is configured on the server.' };
@@ -452,34 +528,71 @@ async function sendWelcomeEmail(
   const appUrl =
     (requestBaseUrl && requestBaseUrl.replace(/\/$/, '')) ||
     (process.env.APP_URL || '').split(',')[0]?.trim().replace(/\/$/, '') ||
-    'https://lcsco-lab-inventory-guw7.onrender.com';
-  const subject = 'Your LCSCO Inventory account — first login';
+    'https://lcsco-lab-inventory.onrender.com';
+  const actionUrl = setupLink || appUrl;
+  const subject = 'Your LCSCO Inventory account is ready';
   const text =
-    `Welcome to LCSCO Inventory (Laboratoire de Catalyse et Synthèse en Chimie Organique).\n\n` +
-    `Your account has been created by the Laboratory Director.\n\n` +
+    `Welcome to LCSCO Inventory\n` +
+    `Laboratoire de Catalyse et Synthèse en Chimie Organique\n\n` +
+    `The Laboratory Director has created your account for the chemical inventory system.\n\n` +
     `Username (email): ${to}\n` +
     `Temporary password: ${tempPassword}\n\n` +
-    `Sign in at: ${appUrl}\n\n` +
-    `IMPORTANT — SECURITY: you will be required to choose your own personal\n` +
-    `password on your first login. This temporary password stops working as\n` +
-    `soon as you complete that first-login change.\n\n` +
+    `Choose your password: ${actionUrl}\n` +
+    `Sign in: ${appUrl}\n\n` +
+    `SECURITY: at your first sign-in you will be asked to choose your own personal\n` +
+    `password. This temporary password stops working as soon as you do.\n\n` +
     `If you did not expect this email, contact the Laboratory Director.`;
+  const safeTo = escapeHtml(to);
+  const safePassword = escapeHtml(tempPassword);
+  const safeAction = escapeHtml(actionUrl);
+  const safeApp = escapeHtml(appUrl);
   const html =
-    `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;">
-      <h2 style="color:#1B8A2A;">Welcome to LCSCO Inventory</h2>
-      <p>Welcome to the <b>Laboratoire de Catalyse et Synthèse en Chimie Organique</b> chemical inventory system.</p>
-      <p>Your account has been created by the Laboratory Director:</p>
-      <table style="border-collapse:collapse;background:#F8FAFC;border:1px solid #CBD5E1;border-radius:6px;">
-        <tr><td style="padding:8px 14px;font-weight:bold;">Username (email)</td><td style="padding:8px 14px;font-family:monospace;">${to}</td></tr>
-        <tr><td style="padding:8px 14px;font-weight:bold;">Temporary password</td><td style="padding:8px 14px;font-family:monospace;">${tempPassword}</td></tr>
+    `<div style="background:#F1F5F9;padding:24px 12px;font-family:Arial,Helvetica,sans-serif;">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
+        <tr>
+          <td style="background:#166534;padding:22px 28px;">
+            <div style="color:#FFFFFF;font-size:19px;font-weight:bold;letter-spacing:0.3px;">LCSCO Inventory</div>
+            <div style="color:#BBF7D0;font-size:12px;margin-top:4px;">Laboratoire de Catalyse et Synthèse en Chimie Organique</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:28px;">
+            <p style="margin:0 0 12px;font-size:15px;color:#0F172A;">Hello,</p>
+            <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155;">
+              The Laboratory Director has created your account for the LCSCO chemical inventory system.
+              Below are your sign-in details.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #CBD5E1;border-radius:8px;background:#F8FAFC;">
+              <tr>
+                <td style="padding:12px 16px;font-size:12px;color:#64748B;width:42%;">Username (email)</td>
+                <td style="padding:12px 16px;font-size:13px;color:#0F172A;font-family:Consolas,monospace;word-break:break-all;">${safeTo}</td>
+              </tr>
+              <tr>
+                <td style="padding:12px 16px;font-size:12px;color:#64748B;border-top:1px solid #E2E8F0;">Temporary password</td>
+                <td style="padding:12px 16px;font-size:13px;color:#0F172A;font-family:Consolas,monospace;border-top:1px solid #E2E8F0;word-break:break-all;">${safePassword}</td>
+              </tr>
+            </table>
+            <p style="margin:22px 0 8px;">
+              <a href="${safeAction}" style="background:#166534;color:#FFFFFF;text-decoration:none;font-size:14px;font-weight:bold;padding:12px 22px;border-radius:6px;display:inline-block;">Choose my password</a>
+            </p>
+            <p style="margin:6px 0 0;font-size:12px;color:#64748B;">
+              or open <a href="${safeApp}" style="color:#166534;">${safeApp}</a> and sign in with the details above.
+            </p>
+            <p style="margin:22px 0 0;padding:12px 16px;background:#FEF9C3;border:1px solid #FACC15;border-radius:8px;font-size:12px;line-height:1.6;color:#713F12;">
+              <b>Security:</b> at your first sign-in you will be asked to choose your own personal password.
+              This temporary password stops working as soon as you do.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 28px;border-top:1px solid #E2E8F0;background:#F8FAFC;">
+            <p style="margin:0;font-size:11px;line-height:1.5;color:#94A3B8;">
+              LCSCO Inventory · Université de Tlemcen<br />
+              If you did not expect this email, contact the Laboratory Director.
+            </p>
+          </td>
+        </tr>
       </table>
-      <p style="margin-top:16px;">
-        <a href="${appUrl}" style="background:#1B8A2A;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;">Sign in to LCSCO Inventory</a>
-      </p>
-      <p style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;font-size:13px;">
-        <b>Security:</b> on your first login you will be required to choose your own personal password. This temporary password stops working as soon as you complete that first-login change.
-      </p>
-      <p style="font-size:12px;color:#64748B;">If you did not expect this email, contact the Laboratory Director.</p>
     </div>`;
   return deliverMail({ to, subject, text, html });
 }
@@ -779,7 +892,8 @@ CRITICAL FORMATTING RULES:
         await getAdminFirestore().doc(`users/${record.uid}`).set(profile);
 
         const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
-        const mailResult = await sendWelcomeEmail(candidate, tempPassword, requestBaseUrl);
+        const setupLink = await createPasswordSetupLink(candidate, requestBaseUrl);
+        const mailResult = await sendWelcomeEmail(candidate, tempPassword, requestBaseUrl, setupLink);
 
         // The temporary password is returned exactly once, to the Director,
         // so it can be shown in the UI and copied as a fallback. It is never
@@ -917,11 +1031,9 @@ CRITICAL FORMATTING RULES:
         await adminAuthInstance.updateUser(targetUid, { password: tempPassword, emailVerified: true });
         await profileRef.set({ mustChangePassword: true }, { merge: true });
 
-        const mailResult = await sendWelcomeEmail(
-          email,
-          tempPassword,
-          `${req.protocol}://${req.get('host')}`
-        );
+        const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
+        const setupLink = await createPasswordSetupLink(email, requestBaseUrl);
+        const mailResult = await sendWelcomeEmail(email, tempPassword, requestBaseUrl, setupLink);
         console.log(
           `[resend-welcome] ${email} re-issued by ${req.user?.email}. emailSent=${mailResult.sent}` +
             (mailResult.error ? ` reason=${mailResult.error}` : '')
