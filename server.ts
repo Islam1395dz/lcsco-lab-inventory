@@ -539,6 +539,8 @@ async function sendWelcomeEmail(
     `Temporary password: ${tempPassword}\n\n` +
     `Choose your password: ${actionUrl}\n` +
     `Sign in: ${appUrl}\n\n` +
+    `The link above is time-limited. If it has expired, sign in with the temporary\n` +
+    `password and you will be asked to choose a new one.\n\n` +
     `SECURITY: at your first sign-in you will be asked to choose your own personal\n` +
     `password. This temporary password stops working as soon as you do.\n\n` +
     `If you did not expect this email, contact the Laboratory Director.`;
@@ -577,6 +579,9 @@ async function sendWelcomeEmail(
             </p>
             <p style="margin:6px 0 0;font-size:12px;color:#64748B;">
               or open <a href="${safeApp}" style="color:#166534;">${safeApp}</a> and sign in with the details above.
+            </p>
+            <p style="margin:8px 0 0;font-size:11px;color:#94A3B8;">
+              This link is time-limited. If it has expired, sign in with your temporary password and you will be asked to choose a new one.
             </p>
             <p style="margin:22px 0 0;padding:12px 16px;background:#FEF9C3;border:1px solid #FACC15;border-radius:8px;font-size:12px;line-height:1.6;color:#713F12;">
               <b>Security:</b> at your first sign-in you will be asked to choose your own personal password.
