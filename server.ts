@@ -30,9 +30,14 @@ import {
   type App as AdminApp,
   type Auth as AdminAuth,
 } from 'firebase-admin/app';
-import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import type { Response, NextFunction, Request } from 'express';
 import crypto from 'crypto';
+import {
+  INITIAL_DEMO_CONTAINERS,
+  INITIAL_DEMO_PRODUCTS,
+  INITIAL_PHYSICAL_LOCATIONS,
+} from './src/data/demoInventoryData';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
@@ -674,6 +679,192 @@ async function startServer() {
    * field values of the affected container/product, and role flags), never
    * credentials or personal data. Remove once the data repair is verified.
    */
+  const diagnosticKey = process.env.DIAG_KEY || '';
+  const isDiagnosticAuthorized = (req: Request) =>
+    diagnosticKey.length >= 24 && req.get('x-diag-key') === diagnosticKey;
+
+  /**
+   * Operator-only data repair: recreate reference documents that are missing
+   * from Firestore without touching documents that already exist. This is used
+   * when a deterministic reference row (e.g. containers/REA-239) was deleted,
+   * while all other rows and their live quantities must be preserved.
+   */
+  app.post('/api/diagnostics/repair-reference', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    try {
+      const db = getAdminFirestore();
+      const requestedKinds = Array.isArray(req.body?.kinds)
+        ? req.body.kinds.filter((kind: unknown) => typeof kind === 'string')
+        : ['products', 'containers', 'locations'];
+      const dryRun = req.body?.dryRun === true;
+      const sources: Record<string, { collection: string; idField: string; items: any[] }> = {
+        products: { collection: 'products', idField: 'productId', items: INITIAL_DEMO_PRODUCTS },
+        containers: {
+          collection: 'containers',
+          idField: 'containerId',
+          items: INITIAL_DEMO_CONTAINERS,
+        },
+        locations: {
+          collection: 'physicalLocations',
+          idField: 'id',
+          items: INITIAL_PHYSICAL_LOCATIONS,
+        },
+      };
+
+      const result: Record<string, unknown> = {};
+      for (const kind of requestedKinds) {
+        const source = sources[kind];
+        if (!source) continue;
+        const missing: string[] = [];
+        for (let offset = 0; offset < source.items.length; offset += 300) {
+          const chunk = source.items.slice(offset, offset + 300);
+          const refs = chunk
+            .map((item) => String(item?.[source.idField] || ''))
+            .filter((id) => /^[a-zA-Z0-9_-]{1,120}$/.test(id))
+            .map((id) => db.collection(source.collection).doc(id));
+          if (refs.length === 0) continue;
+          const snaps = await db.getAll(...refs);
+          const existingIds = new Set(snaps.filter((snap) => snap.exists).map((snap) => snap.id));
+          for (const ref of refs) {
+            if (!existingIds.has(ref.id)) missing.push(ref.id);
+          }
+        }
+
+        if (!dryRun && missing.length > 0) {
+          const missingSet = new Set(missing);
+          for (let offset = 0; offset < source.items.length; offset += 400) {
+            const chunk = source.items.slice(offset, offset + 400);
+            const batch = db.batch();
+            let writes = 0;
+            for (const item of chunk) {
+              const id = String(item?.[source.idField] || '');
+              if (!missingSet.has(id)) continue;
+              const document: Record<string, unknown> = { ...item };
+              if (kind === 'containers') {
+                document.createdBy = 'reference-import';
+              }
+              batch.set(db.collection(source.collection).doc(id), document);
+              writes += 1;
+            }
+            if (writes > 0) await batch.commit();
+          }
+        }
+
+        result[kind] = { missingCount: missing.length, missing, dryRun };
+      }
+
+      res.json({ success: true, result });
+    } catch (err: any) {
+      console.error('[diagnostics/repair-reference] failed', { message: err?.message });
+      res.status(500).json({ error: 'Reference repair failed.' });
+    }
+  });
+
+  /**
+   * Operator-only rules probe. Creates a disposable verified Auth account and a
+   * disposable container, then returns a custom token so the caller can verify
+   * that a freshly minted token can write under the published rules. The caller
+   * must clean up with DELETE /api/diagnostics/probe afterwards.
+   */
+  app.post('/api/diagnostics/probe', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    const role = req.body?.role === 'ADMIN' ? 'ADMIN' : 'STUDENT_RESEARCHER';
+    const suffix = crypto.randomBytes(8).toString('hex');
+    const uid = `diag-${suffix}`;
+    const containerId = `DIAG-${suffix.toUpperCase()}`;
+    const email = `${uid}@lcsco.invalid`;
+    try {
+      const db = getAdminFirestore();
+      await adminAuthInstance.createUser({
+        uid,
+        email,
+        emailVerified: true,
+        password: crypto.randomBytes(24).toString('hex'),
+        disabled: false,
+      });
+      await db.doc(`users/${uid}`).set({
+        uid,
+        fullName: 'Diagnostic Probe',
+        email,
+        role,
+        laboratoryIds: ['LCSCO'],
+        status: 'ACTIVE',
+        createdAt: FieldValue.serverTimestamp(),
+        lastLogin: FieldValue.serverTimestamp(),
+      });
+      await db.doc(`containers/${containerId}`).set({
+        containerId,
+        productId: 'PDF-PROD-239',
+        laboratoryId: 'LCSCO',
+        initialQuantity: 100,
+        currentQuantity: 100,
+        unit: 'g',
+        location: {
+          building: 'LCSCO',
+          room: 'Synthesis Lab',
+          unit: 'CAB 4',
+          shelf: '1',
+          position: '01',
+          code: 'CAB 4- Level 1- Right side',
+        },
+        storageCondition: 'Diagnostic probe only',
+        status: 'NORMAL',
+        lotNumber: 'DIAG-LOT',
+        supplier: 'Diagnostic',
+        expiryDate: '2028-12-31',
+        createdBy: uid,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      const customToken = await adminAuthInstance.createCustomToken(uid);
+      res.json({
+        success: true,
+        uid,
+        containerId,
+        productId: 'PDF-PROD-239',
+        laboratoryId: 'LCSCO',
+        apiKey: 'AIzaSyA6O0kSrq2YI55BcoWsvi9vA7MspTPbwKE',
+        customToken,
+      });
+    } catch (err: any) {
+      console.error('[diagnostics/probe] failed', { message: err?.message });
+      res.status(500).json({ error: 'Probe setup failed.' });
+    }
+  });
+
+  app.delete('/api/diagnostics/probe', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    const uid = typeof req.body?.uid === 'string' ? req.body.uid : '';
+    const containerId = typeof req.body?.containerId === 'string' ? req.body.containerId : '';
+    if (!uid.startsWith('diag-') || !containerId.startsWith('DIAG-')) {
+      res.status(400).json({ error: 'Refusing to clean up non-diagnostic documents.' });
+      return;
+    }
+    try {
+      const db = getAdminFirestore();
+      const transactions = await db.collection('transactions').where('userId', '==', uid).get();
+      const batch = db.batch();
+      for (const transaction of transactions.docs) batch.delete(transaction.ref);
+      batch.delete(db.doc(`containers/${containerId}`));
+      batch.delete(db.doc(`users/${uid}`));
+      await batch.commit();
+      await adminAuthInstance.deleteUser(uid).catch(() => undefined);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('[diagnostics/probe cleanup] failed', { message: err?.message });
+      res.status(500).json({ error: 'Probe cleanup failed.' });
+    }
+  });
+
   app.get('/api/diagnostics/inventory', async (_req, res) => {
     if (!adminAuthInstance) {
       res.status(503).json({ error: 'Admin SDK is not configured on the server.' });

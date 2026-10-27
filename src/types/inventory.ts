@@ -3,7 +3,7 @@
  * Synchronized verbatim with `firebase-blueprint.json` and `firestore.rules`.
  */
 
-import { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 
 export enum UserRole {
   ADMIN = 'ADMIN', // 1. DIRECTOR — Full Administrator
