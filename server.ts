@@ -679,7 +679,13 @@ async function startServer() {
    * field values of the affected container/product, and role flags), never
    * credentials or personal data. Remove once the data repair is verified.
    */
-  const diagnosticKey = process.env.DIAG_KEY || '';
+  // Temporary operator diagnostics. Prefer DIAG_KEY from the environment; when
+  // it is absent, use an ephemeral per-boot key published only in the Render
+  // log stream so the endpoints are never open to the public internet.
+  const diagnosticKey = process.env.DIAG_KEY || crypto.randomBytes(24).toString('hex');
+  if (!process.env.DIAG_KEY) {
+    console.log(`[diagnostics] ephemeral operator key: ${diagnosticKey}`);
+  }
   const isDiagnosticAuthorized = (req: Request) =>
     diagnosticKey.length >= 24 && req.get('x-diag-key') === diagnosticKey;
 

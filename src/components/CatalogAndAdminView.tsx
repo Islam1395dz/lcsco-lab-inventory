@@ -354,6 +354,27 @@ export const CatalogAndAdminView: React.FC<CatalogAndAdminViewProps> = ({
           : 'Select physical location using separate dropdowns (Room → Cabinet → Side → Shelf → Position).'
       }
       maxWidth="max-w-2xl"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            {isFr ? 'Annuler' : 'Cancel'}
+          </Button>
+          <Button
+            type="submit"
+            form={mode === 'container' ? 'register-container-form' : 'create-product-form'}
+            variant="primary"
+            disabled={submitting}
+          >
+            {mode === 'container'
+              ? isFr
+                ? 'Enregistrer le flacon'
+                : 'Register container'
+              : isFr
+              ? 'Créer la référence'
+              : 'Save chemical reference'}
+          </Button>
+        </div>
+      }
     >
       {/* Mode Switcher */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-3 mb-4">
@@ -404,7 +425,7 @@ export const CatalogAndAdminView: React.FC<CatalogAndAdminViewProps> = ({
       )}
 
       {mode === 'container' ? (
-        <form onSubmit={handleRegisterContainer} className="space-y-4">
+        <form id="register-container-form" onSubmit={handleRegisterContainer} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -683,17 +704,9 @@ export const CatalogAndAdminView: React.FC<CatalogAndAdminViewProps> = ({
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
-              {isFr ? 'Annuler' : 'Cancel'}
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {isFr ? 'Enregistrer le flacon' : 'Register container'}
-            </Button>
-          </div>
         </form>
       ) : (
-        <form onSubmit={handleCreateProduct} className="space-y-4">
+        <form id="create-product-form" onSubmit={handleCreateProduct} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -862,14 +875,6 @@ export const CatalogAndAdminView: React.FC<CatalogAndAdminViewProps> = ({
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
-              {isFr ? 'Annuler' : 'Cancel'}
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {isFr ? 'Créer la référence' : 'Save chemical reference'}
-            </Button>
-          </div>
         </form>
       )}
     </Modal>

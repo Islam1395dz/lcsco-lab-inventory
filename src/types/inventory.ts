@@ -473,6 +473,8 @@ export interface InventoryTransaction {
 
 export interface FirestoreErrorInfo {
   error: string;
+  code?: string | null;
+  userMessage?: string;
   operationType: OperationType;
   path: string | null;
   authInfo: {

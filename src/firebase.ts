@@ -62,16 +62,48 @@ export async function getApiAuthToken(): Promise<string | null> {
  * Standardized Firestore Error Handler
  * Wraps permission or operational failures into a structured JSON error payload.
  */
+function buildFirestoreUserMessage(
+  code: string,
+  operationType: OperationType,
+  path: string | null,
+  rawMessage: string
+): string {
+  const target = path ? ` "${path}"` : '';
+  const isWrite = operationType !== OperationType.GET && operationType !== OperationType.LIST;
+  const noChange = isWrite ? ' No changes were saved.' : '';
+
+  if (code.includes('permission-denied')) {
+    return `Permission denied while accessing${target}. Your account is not authorized for this operation, or your session is out of date. Sign out and back in, then retry.${noChange}`;
+  }
+  if (code.includes('not-found')) {
+    return `The selected record${target} no longer exists. Refresh the inventory and choose an existing record.${noChange}`;
+  }
+  if (code.includes('failed-precondition') || code.includes('aborted')) {
+    return `This record changed at the same time as your request. Refresh and retry.${noChange}`;
+  }
+  if (code.includes('unavailable') || code.includes('deadline-exceeded')) {
+    return `Firestore is temporarily unreachable. Check your connection and retry.${noChange}`;
+  }
+  return rawMessage;
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
 ): never {
   const rawMessage = error instanceof Error ? error.message : String(error);
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+  const userMessage = buildFirestoreUserMessage(code, operationType, path, rawMessage);
 
-  // Preserve custom business logic validation errors clearly while also logging structured info
+  // Preserve custom business logic validation errors clearly while also logging structured info.
   const errInfo: FirestoreErrorInfo = {
     error: rawMessage,
+    code: code || null,
+    userMessage,
     authInfo: {
       userId: auth.currentUser?.uid ?? null,
       email: auth.currentUser?.email ?? null,
@@ -101,6 +133,9 @@ export function parseDisplayError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   try {
     const parsed = JSON.parse(message) as Partial<FirestoreErrorInfo>;
+    if (parsed && typeof parsed.userMessage === 'string') {
+      return parsed.userMessage;
+    }
     if (parsed && typeof parsed.error === 'string') {
       return parsed.error;
     }

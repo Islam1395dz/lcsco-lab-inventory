@@ -122,7 +122,9 @@ export async function withdrawChemicalStock(params: {
     runTransaction(db, async (transaction) => {
       const containerSnap = await transaction.get(containerRef);
       if (!containerSnap.exists()) {
-        throw new Error(`Container ${containerId} does not exist.`);
+        throw new Error(
+          `Missing Container: Container "${containerId}" no longer exists. Refresh the inventory and select an existing container. No stock change was committed.`
+        );
       }
 
       const container = containerSnap.data() as ChemicalContainer;
@@ -177,6 +179,7 @@ export async function withdrawChemicalStock(params: {
         error.message.includes('Unit Mismatch Error') ||
         error.message.includes('Container Locked Error') ||
         error.message.includes('Validation Error') ||
+        error.message.includes('Missing Container') ||
         error.message.includes('does not exist'))
     ) {
       throw error;
@@ -598,10 +601,23 @@ export async function createProductCatalogItem(input: {
     updatedAt: serverTimestamp(),
   };
 
+  const executeCreate = () => setDoc(doc(db, 'products', productId), payload);
+
   try {
-    await setDoc(doc(db, 'products', productId), payload);
+    await executeCreate();
     return productId;
   } catch (error) {
+    // The rules read email_verified from the ID token. A member whose account
+    // was just repaired can still hold a stale token, so refresh once and retry
+    // before surfacing a permission error.
+    if (await shouldRetryWithFreshToken(error)) {
+      try {
+        await executeCreate();
+        return productId;
+      } catch (retryError) {
+        error = retryError;
+      }
+    }
     handleFirestoreError(error, OperationType.CREATE, `products/${productId}`);
   }
 }
@@ -640,8 +656,8 @@ export async function createChemicalContainer(input: {
   const transactionId = generateTransactionId('REG');
   const transactionRef = doc(db, 'transactions', transactionId);
 
-  try {
-    await runTransaction(db, async (transaction) => {
+  const executeCreate = () =>
+    runTransaction(db, async (transaction) => {
       const existingSnap = await transaction.get(containerRef);
       if (existingSnap.exists()) {
         throw new Error(`Duplicate Container ID: A container with ID "${containerId}" already exists.`);
@@ -686,6 +702,8 @@ export async function createChemicalContainer(input: {
       });
     });
 
+  try {
+    await executeCreate();
     return containerId;
   } catch (error) {
     if (
@@ -693,6 +711,14 @@ export async function createChemicalContainer(input: {
       (error.message.includes('Duplicate Container ID') || error.message.includes('Validation Error'))
     ) {
       throw error;
+    }
+    if (await shouldRetryWithFreshToken(error)) {
+      try {
+        await executeCreate();
+        return containerId;
+      } catch (retryError) {
+        error = retryError;
+      }
     }
     handleFirestoreError(error, OperationType.CREATE, `containers/${containerId}`);
   }
