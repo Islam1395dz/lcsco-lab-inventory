@@ -872,6 +872,60 @@ async function startServer() {
     }
   });
 
+  app.post('/api/diagnostics/publish-rules', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    try {
+      const source = String(req.body?.source || '');
+      if (!source.trim()) {
+        res.status(400).json({ error: 'source is required.' });
+        return;
+      }
+      const credential = (getAdminApp().options as any).credential;
+      const accessToken = await credential.getAccessToken();
+      const headers = {
+        Authorization: `Bearer ${accessToken.access_token}`,
+        'Content-Type': 'application/json',
+      };
+      const createResponse = await fetch(
+        'https://firebaserules.googleapis.com/v1/projects/lcsco-lab-inventory/rulesets',
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            source: { files: [{ name: 'firestore.rules', content: source }] },
+          }),
+        }
+      );
+      const ruleset = await createResponse.json();
+      if (!createResponse.ok) {
+        res.status(createResponse.status).json(ruleset);
+        return;
+      }
+      const releaseName = 'projects/lcsco-lab-inventory/releases/cloud.firestore';
+      const patchResponse = await fetch(
+        `https://firebaserules.googleapis.com/v1/${releaseName}?updateMask=rulesetName`,
+        {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({
+            release: { name: releaseName, rulesetName: ruleset.name },
+          }),
+        }
+      );
+      const release = await patchResponse.json();
+      res.status(patchResponse.status).json({
+        ruleset: { name: ruleset.name, createTime: ruleset.createTime },
+        release,
+      });
+    } catch (err: any) {
+      console.error('[diagnostics/publish-rules] failed', { message: err?.message });
+      res.status(500).json({ error: 'Rules publish failed.' });
+    }
+  });
+
   app.get('/api/diagnostics/rules', async (req, res) => {
     if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
       res.status(404).json({ error: 'Not found.' });
