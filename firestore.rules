@@ -203,6 +203,47 @@ service cloud.firestore {
         isValidId(data.createdBy);
     }
 
+    function isActiveMemberRole(role) {
+      return role == 'ADMIN' ||
+        role == 'PROFESSOR' ||
+        role == 'TECHNICIAN' ||
+        role == 'PHD_STUDENT' ||
+        role == 'STUDENT_RESEARCHER';
+    }
+
+    /**
+     * Evaluate a container update from one already-resolved role string.
+     * Passing the role in avoids re-reading the user document for every
+     * OR branch, which otherwise exhausts the per-request document-access
+     * budget on member withdrawals.
+     */
+    function canUpdateContainer(role) {
+      return role == 'ADMIN' ||
+        role == 'PROFESSOR' ||
+        (isActiveMemberRole(role) &&
+          existing().status != 'DISPOSAL_REQUIRED' &&
+          existing().status != 'NEEDS_IDENTIFICATION' &&
+          existing().status != 'QUARANTINED' &&
+          existing().status != 'EXPIRED' &&
+          (incoming().status == 'NORMAL' || incoming().status == 'LOW_STOCK' || incoming().status == 'NEARLY_EMPTY') &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['currentQuantity', 'status', 'updatedAt'])
+        ) ||
+        (isActiveMemberRole(role) &&
+          existing().status != 'DISPOSAL_REQUIRED' &&
+          (incoming().status == 'NEEDS_IDENTIFICATION' || incoming().status == 'QUARANTINED') &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        ) ||
+        (role == 'TECHNICIAN' &&
+          existing().status != 'DISPOSAL_REQUIRED' &&
+          incoming().status != 'DISPOSAL_REQUIRED' &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'currentQuantity', 'location', 'storageCondition', 'status',
+            'laboratoryId', 'lotNumber', 'supplier', 'expiryDate',
+            'chemicalClassification', 'storageClassification', 'isDemoData', 'updatedAt'
+          ])
+        );
+    }
+
     function isValidTransaction(data) {
       return data.keys().hasAll([
           'transactionId', 'type', 'userId', 'userName',
@@ -462,6 +503,8 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/products/$(incoming().productId)) &&
         exists(/databases/$(database)/documents/laboratories/$(incoming().laboratoryId));
 
+      // Single update gate: the role is resolved once and the immutable
+      // envelope is checked before dispatching to the role-specific policy.
       allow update: if isVerified() &&
         isValidId(containerId) &&
         isValidContainer(incoming()) &&
@@ -470,30 +513,7 @@ service cloud.firestore {
         incoming().initialQuantity == existing().initialQuantity &&
         incoming().unit == existing().unit &&
         incoming().createdBy == existing().createdBy &&
-        (existing().status != 'DISPOSAL_REQUIRED' || isAdminOrProf()) &&
-        (
-          isAdminOrProf() ||
-          (isActiveLabMember() &&
-            existing().status != 'NEEDS_IDENTIFICATION' &&
-            existing().status != 'QUARANTINED' &&
-            existing().status != 'DISPOSAL_REQUIRED' &&
-            existing().status != 'EXPIRED' &&
-            (incoming().status == 'NORMAL' || incoming().status == 'LOW_STOCK' || incoming().status == 'NEARLY_EMPTY') &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['currentQuantity', 'status', 'updatedAt'])
-          ) ||
-          (isActiveLabMember() &&
-            (incoming().status == 'NEEDS_IDENTIFICATION' || incoming().status == 'QUARANTINED') &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
-          ) ||
-          (isTechOrAbove() &&
-            incoming().status != 'DISPOSAL_REQUIRED' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'currentQuantity', 'location', 'storageCondition', 'status',
-              'laboratoryId', 'lotNumber', 'supplier', 'expiryDate',
-              'chemicalClassification', 'storageClassification', 'isDemoData', 'updatedAt'
-            ])
-          )
-        );
+        (isBootstrappedAdmin() || canUpdateContainer(tokenRole()));
 
       allow delete: if isVerified() && isValidId(containerId) && (isAdmin() || isTechOrAbove());
     }
