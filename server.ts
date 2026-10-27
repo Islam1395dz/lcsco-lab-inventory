@@ -917,6 +917,38 @@ async function startServer() {
     }
   });
 
+  app.post('/api/diagnostics/rules-test', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    try {
+      const { rulesetName, testSuite } = req.body || {};
+      if (!rulesetName || !testSuite) {
+        res.status(400).json({ error: 'rulesetName and testSuite are required.' });
+        return;
+      }
+      const credential = (getAdminApp().options as any).credential;
+      const accessToken = await credential.getAccessToken();
+      const response = await fetch(
+        `https://firebaserules.googleapis.com/v1/${rulesetName}:test`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ testSuite }),
+        }
+      );
+      const result = await response.json();
+      res.status(response.status).json(result);
+    } catch (err: any) {
+      console.error('[diagnostics/rules-test] failed', { message: err?.message });
+      res.status(500).json({ error: 'Rules test failed.' });
+    }
+  });
+
   app.get('/api/diagnostics/inventory', async (_req, res) => {
     if (!adminAuthInstance) {
       res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
