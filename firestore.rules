@@ -563,7 +563,7 @@ service cloud.firestore {
         incoming().requestId == existing().requestId &&
         existing().status == 'PENDING' &&
         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
-        incoming().status.isIn(['APPROVED', 'REJECTED']) &&
+        incoming().status in ['APPROVED', 'REJECTED'] &&
         isTechOrAbove() &&
         existing().requestedByUid != request.auth.uid;
 
