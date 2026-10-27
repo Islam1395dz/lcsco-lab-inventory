@@ -515,6 +515,16 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
       setIsPreviewMode(false);
 
+      // Rules evaluate `email_verified` from the ID token, not from the Auth
+      // user record. A member verified or repaired by the Director through the
+      // Admin SDK must therefore get a fresh token before the Firestore
+      // listeners start, otherwise reads work but every write is denied.
+      try {
+        await user.getIdToken(true);
+      } catch {
+        // Offline or transient failure: keep the cached token and continue.
+      }
+
       try {
         const userRef = doc(db, 'users', user.uid);
         const snap = await getDoc(userRef);

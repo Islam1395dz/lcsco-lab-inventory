@@ -18,7 +18,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { db, handleFirestoreError } from '../firebase';
+import { auth, db, handleFirestoreError } from '../firebase';
 import {
   INITIAL_PHYSICAL_LOCATIONS,
 } from '../data/demoInventoryData';
@@ -67,6 +67,32 @@ function generateTransactionId(prefix = 'TX'): string {
   return `${prefix}-${Date.now()}-${randomSuffix}`;
 }
 
+function isPermissionDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'permission-denied' || code === 'firestore/permission-denied';
+}
+
+/**
+ * Firestore rules read `email_verified` from the ID token, not from the Auth
+ * user record. When the Director verifies or repairs an account with the Admin
+ * SDK while the member is already signed in, the member's cached token can
+ * still say `email_verified: false`, so every write is rejected even though
+ * `auth.currentUser.emailVerified` is true. If that is the case, force-refresh
+ * the token and let the caller retry the write once.
+ */
+async function shouldRetryWithFreshToken(error: unknown): Promise<boolean> {
+  if (!isPermissionDeniedError(error) || !auth.currentUser) return false;
+  try {
+    const token = await auth.currentUser.getIdTokenResult();
+    if (token.claims.email_verified === true) return false;
+    await auth.currentUser.getIdToken(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * WORKFLOW A: Atomic Bench Withdrawal (`runTransaction`)
  * 1. Reads current container stock inside transaction
@@ -91,8 +117,8 @@ export async function withdrawChemicalStock(params: {
   const transactionId = generateTransactionId('WD');
   const transactionRef = doc(db, 'transactions', transactionId);
 
-  try {
-    return await runTransaction(db, async (transaction) => {
+  const executeWithdrawal = () =>
+    runTransaction(db, async (transaction) => {
       const containerSnap = await transaction.get(containerRef);
       if (!containerSnap.exists()) {
         throw new Error(`Container ${containerId} does not exist.`);
@@ -133,7 +159,17 @@ export async function withdrawChemicalStock(params: {
         transactionId,
       };
     });
+
+  try {
+    return await executeWithdrawal();
   } catch (error) {
+    if (await shouldRetryWithFreshToken(error)) {
+      try {
+        return await executeWithdrawal();
+      } catch (retryError) {
+        error = retryError;
+      }
+    }
     if (
       error instanceof Error &&
       (error.message.includes('Negative Stock Error') ||
