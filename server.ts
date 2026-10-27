@@ -669,6 +669,97 @@ async function startServer() {
   });
 
   /**
+   * Temporary, non-sensitive inventory integrity probe used to diagnose
+   * permission-denied writes. It exposes only structural metadata (counts,
+   * field values of the affected container/product, and role flags), never
+   * credentials or personal data. Remove once the data repair is verified.
+   */
+  app.get('/api/diagnostics/inventory', async (_req, res) => {
+    if (!adminAuthInstance) {
+      res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+      return;
+    }
+    try {
+      const db = getAdminFirestore();
+      const [productsCount, containersCount, transactionsCount, usersCount] = await Promise.all([
+        db.collection('products').count().get(),
+        db.collection('containers').count().get(),
+        db.collection('transactions').count().get(),
+        db.collection('users').count().get(),
+      ]);
+
+      const containerIds = ['REA-239', 'TO-BE-CHECKED'];
+      const productIds = ['PDF-PROD-239', 'PROD-MVQK5UB8'];
+      const userIds = ['0GIR6GWwA4d53AD7ydmCZuZrTKh1', 'pE1ezkcBXtWqSQaMDQz4MkCm4ig1'];
+
+      const containers: Record<string, unknown> = {};
+      for (const id of containerIds) {
+        const snap = await db.doc(`containers/${id}`).get();
+        containers[id] = snap.exists
+          ? {
+              exists: true,
+              productId: snap.get('productId') || null,
+              currentQuantity: snap.get('currentQuantity') ?? null,
+              initialQuantity: snap.get('initialQuantity') ?? null,
+              status: snap.get('status') || null,
+              createdBy: snap.get('createdBy') || null,
+              updatedAt: snap.get('updatedAt') || null,
+            }
+          : { exists: false };
+      }
+
+      const products: Record<string, unknown> = {};
+      for (const id of productIds) {
+        const snap = await db.doc(`products/${id}`).get();
+        products[id] = snap.exists
+          ? {
+              exists: true,
+              productId: snap.get('productId') || null,
+              chemicalName: snap.get('chemicalName') || null,
+            }
+          : { exists: false };
+      }
+
+      const users: Record<string, unknown> = {};
+      for (const id of userIds) {
+        const snap = await db.doc(`users/${id}`).get();
+        users[id] = snap.exists
+          ? {
+              exists: true,
+              role: snap.get('role') || null,
+              status: snap.get('status') || null,
+              mustChangePassword: snap.get('mustChangePassword') ?? null,
+            }
+          : { exists: false };
+      }
+
+      const markerSnap = await db.doc('systemSettings/referenceInventory').get();
+      const productSample = await db.collection('products').limit(10).get();
+
+      res.json({
+        counts: {
+          products: productsCount.data().count,
+          containers: containersCount.data().count,
+          transactions: transactionsCount.data().count,
+          users: usersCount.data().count,
+        },
+        containers,
+        products,
+        users,
+        referenceInventoryMarker: markerSnap.exists ? markerSnap.data() : null,
+        productSample: productSample.docs.map((doc) => ({
+          id: doc.id,
+          productId: doc.get('productId') || null,
+          chemicalName: doc.get('chemicalName') || null,
+        })),
+      });
+    } catch (err: any) {
+      console.error('[diagnostics/inventory] failed', { message: err?.message });
+      res.status(500).json({ error: 'Diagnostic read failed.' });
+    }
+  });
+
+  /**
    * AI Real Inventory Document Importer (PDF, Image, CSV, or Text)
    * Restricted to laboratory staff roles. Rate limited.
    * Parses an attached laboratory inventory file, creates the corresponding cabinets,
