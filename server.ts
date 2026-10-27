@@ -735,6 +735,32 @@ async function startServer() {
 
       const markerSnap = await db.doc('systemSettings/referenceInventory').get();
       const productSample = await db.collection('products').limit(10).get();
+      const containerSample = await db
+        .collection('containers')
+        .orderBy('containerId')
+        .startAt('REA-230')
+        .endAt('REA-250')
+        .get();
+      const containersForProduct = await db
+        .collection('containers')
+        .where('productId', '==', 'PDF-PROD-239')
+        .get();
+      const labSnap = await db.doc('laboratories/LCSCO').get();
+
+      const authUsers: Record<string, unknown> = {};
+      for (const id of userIds) {
+        try {
+          const record = await adminAuthInstance.getUser(id);
+          authUsers[id] = {
+            emailVerified: record.emailVerified,
+            disabled: record.disabled,
+            customClaims: record.customClaims || null,
+            providers: record.providerData.map((p) => p.providerId),
+          };
+        } catch (err: any) {
+          authUsers[id] = { error: err?.code || 'lookup_failed' };
+        }
+      }
 
       res.json({
         counts: {
@@ -746,11 +772,25 @@ async function startServer() {
         containers,
         products,
         users,
+        authUsers,
+        laboratoryExists: labSnap.exists,
         referenceInventoryMarker: markerSnap.exists ? markerSnap.data() : null,
         productSample: productSample.docs.map((doc) => ({
           id: doc.id,
           productId: doc.get('productId') || null,
           chemicalName: doc.get('chemicalName') || null,
+        })),
+        containerSample: containerSample.docs.map((doc) => ({
+          id: doc.id,
+          productId: doc.get('productId') || null,
+          currentQuantity: doc.get('currentQuantity') ?? null,
+          status: doc.get('status') || null,
+        })),
+        containersForProduct239: containersForProduct.docs.map((doc) => ({
+          id: doc.id,
+          productId: doc.get('productId') || null,
+          currentQuantity: doc.get('currentQuantity') ?? null,
+          status: doc.get('status') || null,
         })),
       });
     } catch (err: any) {
