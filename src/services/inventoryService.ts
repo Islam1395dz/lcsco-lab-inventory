@@ -82,11 +82,12 @@ function isPermissionDeniedError(error: unknown): boolean {
  * the token and let the caller retry the write once.
  */
 async function shouldRetryWithFreshToken(error: unknown): Promise<boolean> {
-  if (!isPermissionDeniedError(error) || !auth.currentUser) return false;
+  const user = auth.currentUser;
+  if (!isPermissionDeniedError(error) || !user) return false;
   try {
-    const token = await auth.currentUser.getIdTokenResult();
-    if (token.claims.email_verified === true) return false;
-    await auth.currentUser.getIdToken(true);
+    const token = await user.getIdTokenResult();
+    if ((token.claims as Record<string, unknown>).email_verified === true) return false;
+    await user.getIdToken(true);
     return true;
   } catch {
     return false;
