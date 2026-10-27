@@ -227,7 +227,10 @@ service cloud.firestore {
         data.quantityChange is number &&
         data.quantityBefore is number && data.quantityBefore >= 0 &&
         data.quantityAfter is number && data.quantityAfter >= 0 &&
-        data.quantityBefore + data.quantityChange == data.quantityAfter &&
+        // Exact equality is impossible for decimal quantities (binary floating
+        // point), so allow the same 0.0001 tolerance as the client's 4-decimal
+        // rounding. Without this, e.g. 10.2 - 0.3 is rejected as "forged".
+        math.abs(data.quantityBefore + data.quantityChange - data.quantityAfter) < 0.0001 &&
         isValidUnit(data.unit) &&
         data.oldLocation is string && data.oldLocation.size() >= 1 && data.oldLocation.size() <= 120 &&
         data.newLocation is string && data.newLocation.size() >= 1 && data.newLocation.size() <= 120 &&

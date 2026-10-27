@@ -1058,6 +1058,75 @@ CRITICAL FORMATTING RULES:
   );
 
   /**
+   * Marks an existing member's email as verified.
+   *
+   * The Firestore rules require `email_verified == true` for every write, and
+   * role resolution falls back to the profile document only for verified
+   * identities. Accounts created before the provisioning flow set
+   * `emailVerified: true` (or created by hand in the Firebase console) are
+   * therefore able to READ the inventory but every stock movement is rejected
+   * with "Missing or insufficient permissions". Re-issuing a temporary
+   * password is too disruptive for a member who already completed onboarding,
+   * so this endpoint repairs only the verification flag.
+   */
+  app.post(
+    '/api/admin/repair-access',
+    globalLimiter,
+    adminActionLimiter,
+    requireAuth,
+    requireRole('ADMIN'),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Admin SDK is not configured on the server.' });
+          return;
+        }
+        const { targetUid } = req.body || {};
+        if (typeof targetUid !== 'string' || !targetUid || targetUid.length > 128) {
+          res.status(400).json({ error: 'targetUid is required.' });
+          return;
+        }
+
+        const profileSnap = await getAdminFirestore().doc(`users/${targetUid}`).get();
+        if (!profileSnap.exists) {
+          res.status(404).json({ error: 'No profile exists for that account.' });
+          return;
+        }
+        const profileData = profileSnap.data() as { email?: string };
+
+        // The Auth record is the source of truth for the sign-in address.
+        const record = await adminAuthInstance.getUser(targetUid).catch(() => null);
+        if (!record) {
+          res.status(404).json({ error: 'No Firebase Auth account exists for that profile.' });
+          return;
+        }
+        if (
+          !profileData.email ||
+          !record.email ||
+          profileData.email.trim().toLowerCase() !== record.email.trim().toLowerCase()
+        ) {
+          res.status(409).json({
+            error: 'The profile email and the sign-in email do not match. Repair refused.',
+          });
+          return;
+        }
+
+        if (!record.emailVerified) {
+          await adminAuthInstance.updateUser(targetUid, { emailVerified: true });
+        }
+        console.log(
+          `[repair-access] ${record.email} verified by ${req.user?.email} ` +
+            `(was ${record.emailVerified})`
+        );
+        res.json({ success: true, email: record.email, emailVerified: true });
+      } catch (err: any) {
+        console.error('[repair-access] failed', { ip: req.ip, message: err?.message });
+        res.status(500).json({ error: 'Failed to repair this account.' });
+      }
+    }
+  );
+
+  /**
    * ========================================================================
    * REFERENCE INVENTORY IMPORT
    * ========================================================================

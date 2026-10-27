@@ -6,6 +6,7 @@ import {
   Lock,
   MailCheck,
   Plus,
+  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ import {
 import {
   deleteLabMemberAccount,
   provisionLabMemberAccount,
+  repairMemberAccess,
   resendWelcomeEmail,
   type ProvisionedAccount,
 } from '../services/adminAccountService';
@@ -57,6 +59,8 @@ export const UserManagementView: React.FC = () => {
   const [copiedTempPassword, setCopiedTempPassword] = useState(false);
   /** Member whose welcome email is currently being re-issued. */
   const [resendingUid, setResendingUid] = useState<string | null>(null);
+  /** Member whose sign-in access is currently being repaired. */
+  const [repairingUid, setRepairingUid] = useState<string | null>(null);
   /** Distinguishes a fresh provisioning from a re-issued invitation in the credentials modal. */
   const [credentialsReason, setCredentialsReason] = useState<'created' | 'resent'>('created');
 
@@ -167,6 +171,32 @@ export const UserManagementView: React.FC = () => {
       setFeedback({ type: 'error', message: parseDisplayError(err) });
     } finally {
       setResendingUid(null);
+    }
+  };
+
+  /**
+   * Repairs the "can read but cannot write" state: the member's Auth record was
+   * created without a verified email, so the Firestore rules refuse every
+   * stock movement. The server flips the flag; the member must sign out and
+   * back in for the new claim to reach their ID token.
+   */
+  const handleRepairAccess = async (targetUser: UserProfile) => {
+    if (!profile) return;
+    setFeedback(null);
+    setRepairingUid(targetUser.uid);
+    try {
+      await repairMemberAccess(targetUser.uid);
+      setFeedback({
+        type: 'success',
+        message: tr(
+          `Sign-in access repaired for "${targetUser.fullName}". Ask them to sign out and sign in again.`,
+          `Accès réparé pour « ${targetUser.fullName} ». Demandez-lui de se déconnecter puis de se reconnecter.`
+        ),
+      });
+    } catch (err) {
+      setFeedback({ type: 'error', message: parseDisplayError(err) });
+    } finally {
+      setRepairingUid(null);
     }
   };
 
@@ -485,6 +515,27 @@ export const UserManagementView: React.FC = () => {
                                   ? tr('Sending…', 'Envoi…')
                                   : tr('Resend invite', "Renvoyer l'invitation")}
                               </span>
+                            </Button>
+                          )}
+                          {!isSelf && !isPreviewMode && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={repairingUid === u.uid}
+                              onClick={() => handleRepairAccess(u)}
+                              aria-label={tr('Repair sign-in access', "Réparer l'accès")}
+                              title={tr(
+                                'Repair sign-in access for an account that can read the inventory but cannot record stock movements.',
+                                "Réparer l'accès d'un compte qui peut consulter l'inventaire mais pas enregistrer de mouvements."
+                              )}
+                            >
+                              <ShieldCheck
+                                className={`w-3.5 h-3.5 ${
+                                  repairingUid === u.uid
+                                    ? 'animate-pulse text-slate-400'
+                                    : 'text-emerald-600'
+                                }`}
+                              />
                             </Button>
                           )}
                           <Button

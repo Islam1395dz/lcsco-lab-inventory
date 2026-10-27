@@ -145,6 +145,23 @@ export async function resendWelcomeEmail(targetUid: string): Promise<Provisioned
   return ensureInviteDelivered(reissued);
 }
 
+/**
+ * Marks a member's Firebase Auth email as verified. Required for accounts
+ * provisioned before the server started creating email-verified users: those
+ * members can read the inventory (reads only need sign-in) but every write is
+ * rejected by the Firestore rules with "Missing or insufficient permissions".
+ * The Director runs this once; the member must then sign out and back in so the
+ * refreshed ID token carries `email_verified: true`.
+ */
+export async function repairMemberAccess(
+  targetUid: string
+): Promise<{ success: boolean; email?: string }> {
+  return adminApiFetch<{ success: boolean; email?: string }>(
+    '/api/admin/repair-access',
+    { targetUid }
+  );
+}
+
 /** Which slice of the official reference inventory to import. */
 export type ReferenceInventoryKind = 'locations' | 'products' | 'containers';
 
