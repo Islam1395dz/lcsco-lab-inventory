@@ -483,6 +483,37 @@ async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
  * ========================================================================== */
 const ASSIGNABLE_ROLES = ['ADMIN', 'PROFESSOR', 'TECHNICIAN', 'PHD_STUDENT', 'STUDENT_RESEARCHER'];
 
+/**
+ * Copy the authoritative Firestore profile role into the Firebase Auth custom
+ * claims. Security rules prefer the claim, which keeps every role check free
+ * of extra document reads (Firestore allows only ten access calls per request).
+ * The profile is read with the Admin SDK, so a client can never choose its role.
+ */
+async function syncUserRoleClaims(uid: string) {
+  const auth = adminAuthInstance;
+  if (!auth) {
+    throw new Error('Admin SDK is not configured on the server.');
+  }
+  const snap = await getAdminFirestore().doc(`users/${uid}`).get();
+  if (!snap.exists) {
+    return { ok: false as const, status: 403, error: 'Your member profile does not exist.' };
+  }
+  const role = snap.get('role');
+  const status = snap.get('status');
+  const laboratoryIds = snap.get('laboratoryIds');
+  if (typeof role !== 'string' || !ASSIGNABLE_ROLES.includes(role)) {
+    return { ok: false as const, status: 403, error: 'Your member profile has no valid role.' };
+  }
+  if (status !== 'ACTIVE') {
+    return { ok: false as const, status: 403, error: 'Your member profile is not active.' };
+  }
+  const labs = Array.isArray(laboratoryIds)
+    ? laboratoryIds.filter((lab): lab is string => typeof lab === 'string' && lab.length <= 128).slice(0, 20)
+    : [];
+  await auth.setCustomUserClaims(uid, { role, laboratoryIds: labs });
+  return { ok: true as const, role, laboratoryIds: labs };
+}
+
 /** Length-safe random temp password, no ambiguous characters (0/O, 1/l/I). */
 function generateTemporaryPassword(length = 14): string {
   const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%&*-+=?';
@@ -673,6 +704,34 @@ async function startServer() {
       origins: (process.env.APP_URL || '').split(',').map((s) => s.trim()).filter(Boolean),
     });
   });
+
+  /**
+   * Refreshes the caller's role custom claim from the Admin-SDK-owned profile.
+   * The browser calls this after login, then forces one ID-token refresh. Rules
+   * can consequently authorize member writes without extra document reads.
+   */
+  app.post(
+    '/api/auth/sync-claims',
+    globalLimiter,
+    requireAuth,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        if (!adminAuthInstance) {
+          res.status(503).json({ error: 'Authentication service is not configured.' });
+          return;
+        }
+        const result = await syncUserRoleClaims(req.user!.uid);
+        if (!result.ok) {
+          res.status(result.status).json({ error: result.error });
+          return;
+        }
+        res.json({ success: true, role: result.role, laboratoryIds: result.laboratoryIds });
+      } catch (err: any) {
+        console.error('[sync-claims] failed', { message: err?.message });
+        res.status(500).json({ error: 'Could not synchronize your role.' });
+      }
+    }
+  );
 
   /**
    * Temporary, non-sensitive inventory integrity probe used to diagnose
@@ -1409,6 +1468,10 @@ CRITICAL FORMATTING RULES:
           createdAt: new Date(),
         };
         await getAdminFirestore().doc(`users/${record.uid}`).set(profile);
+        await adminAuthInstance.setCustomUserClaims(record.uid, {
+          role,
+          laboratoryIds: labs,
+        });
 
         const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
         const setupLink = await createPasswordSetupLink(candidate, requestBaseUrl);

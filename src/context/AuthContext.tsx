@@ -24,6 +24,29 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, parseDisplayError } from '../firebase';
+
+/**
+ * Ask the server to copy the authoritative Firestore role into this user's
+ * Firebase Auth custom claims, then refresh the ID token. Rules can then use
+ * the claim without document reads, which keeps member writes under the
+ * per-request access-call limit.
+ */
+async function syncRoleClaims(user: FirebaseUser): Promise<boolean> {
+  try {
+    const token = await user.getIdToken();
+    const response = await fetch('/api/auth/sync-claims', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return false;
+    await user.getIdToken(true);
+    return true;
+  } catch {
+    // Offline or transient server failure: the existing rules fallback still
+    // keeps read access working; a later login retries the synchronization.
+    return false;
+  }
+}
 import { useLanguage } from './LanguageContext';
 import { completeOnboardingPasswordChange, importReferenceInventory } from '../services/adminAccountService';
 import type { ReferenceInventoryImportResult } from '../services/adminAccountService';
@@ -525,6 +548,10 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         // Offline or transient failure: keep the cached token and continue.
       }
 
+      // Existing profiles get their role claim before the inventory listeners
+      // start. New bootstrap profiles are synchronized after the profile write.
+      await syncRoleClaims(user);
+
       try {
         const userRef = doc(db, 'users', user.uid);
         const snap = await getDoc(userRef);
@@ -570,6 +597,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           await setDoc(userRef, newProfileData);
 
           await seedInitialPhysicalLocations();
+          await syncRoleClaims(user);
         } else {
           const existingData = snap.data() as UserProfile;
           const updatePayload: any = {
@@ -622,6 +650,24 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     );
     return () => unsubProfile();
   }, [authReady, firebaseUser]);
+
+  // Keep the token role in step after a Director changes this member's role.
+  useEffect(() => {
+    if (!firebaseUser || !profile) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tokenResult = await firebaseUser.getIdTokenResult();
+        if (cancelled || tokenResult.claims.role === profile.role) return;
+        await syncRoleClaims(firebaseUser);
+      } catch {
+        // A later login retries; stale claims fail closed.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseUser, profile?.role]);
 
   // 3. Real-time Listeners for Inventory Collections
   useEffect(() => {
