@@ -24,6 +24,7 @@ import {
   type UserRecord,
 } from 'firebase-admin/auth';
 import {
+  getApp as getAdminApp,
   initializeApp as initializeAdminApp,
   applicationDefault,
   cert,
@@ -868,6 +869,51 @@ async function startServer() {
     } catch (err: any) {
       console.error('[diagnostics/probe cleanup] failed', { message: err?.message });
       res.status(500).json({ error: 'Probe cleanup failed.' });
+    }
+  });
+
+  app.get('/api/diagnostics/rules', async (req, res) => {
+    if (!adminAuthInstance || !isDiagnosticAuthorized(req)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+    try {
+      const credential = (getAdminApp().options as any).credential;
+      const accessToken = await credential.getAccessToken();
+      const headers = { Authorization: `Bearer ${accessToken.access_token}` };
+      const releaseResponse = await fetch(
+        'https://firebaserules.googleapis.com/v1/projects/lcsco-lab-inventory/releases/cloud.firestore',
+        { headers }
+      );
+      const release = await releaseResponse.json();
+      if (!releaseResponse.ok) {
+        res.status(releaseResponse.status).json(release);
+        return;
+      }
+      const rulesetName = String(release.rulesetName || '');
+      const rulesetId = rulesetName.split('/').pop();
+      const rulesetResponse = await fetch(
+        `https://firebaserules.googleapis.com/v1/projects/lcsco-lab-inventory/rulesets/${rulesetId}`,
+        { headers }
+      );
+      const ruleset = await rulesetResponse.json();
+      if (!rulesetResponse.ok) {
+        res.status(rulesetResponse.status).json(ruleset);
+        return;
+      }
+      const source = ruleset?.source?.files?.[0]?.content || '';
+      res.json({
+        release: {
+          name: release.name,
+          rulesetName: release.rulesetName,
+          updateTime: release.updateTime,
+        },
+        sourceLength: source.length,
+        source,
+      });
+    } catch (err: any) {
+      console.error('[diagnostics/rules] failed', { message: err?.message });
+      res.status(500).json({ error: 'Rules read failed.' });
     }
   });
 
