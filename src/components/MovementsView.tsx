@@ -187,8 +187,8 @@ export const MovementsView: React.FC<MovementsViewProps> = ({
         if (!canPerform(PermissionAction.RECORD_STOCK_ADDITION)) {
           throw new Error(
             tr(
-              'Only the Director or Technician can record stock additions.',
-              'Seul le Directeur ou le Technicien peut enregistrer des entrées de stock.'
+              'Only the Director, Secretary, or Technician can record stock additions.',
+              'Seul le Directeur, le Secrétaire ou le Technicien peut enregistrer des entrées de stock.'
             )
           );
         }

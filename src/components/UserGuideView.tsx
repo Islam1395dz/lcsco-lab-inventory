@@ -56,11 +56,11 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
         navigationPath: 'Navigation Bar -> Profile',
         instructions: [
           'Click "Profile" in the top navigation bar.',
-          'Create new user profiles, assign or change roles (Director, Professor, Technician, PhD Student), or Activate/Deactivate users.',
+          'Create new user profiles, assign or change roles (Director, Secretary, Professor, Technician, PhD Student), or Activate/Deactivate users.',
           'New members must have a Firebase Authentication account for their email (or sign in with Google) before they can access the inventory.',
         ],
         expectedResult:
-          'Only the Director can create, edit, activate/deactivate, or remove user profiles.',
+          'Only the Director or Secretary can create, edit, activate/deactivate, or remove user profiles.',
       },
       {
         stepNumber: 'STEP 3',
@@ -155,7 +155,7 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
         'Approve purchase and disposal requests from your group and monitor low-stock/expiring chemicals.',
       sampleActionText:
         '[Approve Purchase Request]   [Approve Disposal Request]   [Request Stock Adjustment]',
-      deleteButtonState: 'LOCKED (Director Only)',
+      deleteButtonState: 'LOCKED (Admin Only)',
     },
   },
   {
@@ -222,7 +222,7 @@ const LCSCO_ROLE_MANUALS_EN_REVISED: RoleGuideSection[] = [
         'Perform confirmed quantity adjustments, manage cabinet compartments (Left/Right), and execute approved disposals.',
       sampleActionText:
         '[Receive Delivery]   [Adjust Quantity (Confirm)]   [Change Physical Location]',
-      deleteButtonState: 'LOCKED (Director Only)',
+      deleteButtonState: 'LOCKED (Admin Only)',
     },
   },
   {
@@ -436,7 +436,7 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
         'Approuvez les demandes d’achat et d’élimination du groupe et surveillez les stocks critiques.',
       sampleActionText:
         '[Approuver Achat]   [Approuver Élimination]   [Demander Ajustement de Stock]',
-      deleteButtonState: 'LOCKED (Director Only)',
+      deleteButtonState: 'LOCKED (Admin Only)',
     },
   },
   {
@@ -503,7 +503,7 @@ const LCSCO_ROLE_MANUALS_FR_REVISED: RoleGuideSection[] = [
         'Effectuez des ajustements de quantité confirmés, gérez les compartiments Gauche/Droit et exécutez les éliminations.',
       sampleActionText:
         '[Réceptionner]   [Ajuster la quantité (Confirmer)]   [Modifier emplacement]',
-      deleteButtonState: 'LOCKED (Director Only)',
+      deleteButtonState: 'LOCKED (Admin Only)',
     },
   },
   {
@@ -849,7 +849,7 @@ export const UserGuideView: React.FC = () => {
                     }
                   >
                     {myManual.role === UserRole.ADMIN
-                      ? tr('DIRECTOR ONLY', 'DIRECTEUR SEUL')
+                      ? tr('ADMIN ONLY', 'ADMINISTRATEUR SEUL')
                       : tr('LOCKED', 'VERROUILLÉ')}
                   </strong>
                 </div>
@@ -861,7 +861,7 @@ export const UserGuideView: React.FC = () => {
                     }
                   >
                     {myManual.role === UserRole.ADMIN
-                      ? tr('DIRECTOR ONLY', 'DIRECTEUR SEUL')
+                      ? tr('ADMIN ONLY', 'ADMINISTRATEUR SEUL')
                       : tr('LOCKED', 'VERROUILLÉ')}
                   </strong>
                 </div>
@@ -899,7 +899,7 @@ export const UserGuideView: React.FC = () => {
                   </span>
                   {myManual.role === UserRole.ADMIN ? (
                     <span className="px-2.5 py-1 bg-rose-600 text-white font-semibold rounded text-[11px]">
-                      {tr('Archive/Remove [Director]', 'Supprimer [Directeur]')}
+                      {tr('Archive/Remove [Administrator]', 'Supprimer [Administrateur]')}
                     </span>
                   ) : (
                     <span className="px-2.5 py-1 bg-slate-200 text-slate-600 font-mono rounded text-[11px] inline-flex items-center gap-1">

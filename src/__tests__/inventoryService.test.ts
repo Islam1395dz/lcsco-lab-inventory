@@ -260,26 +260,31 @@ describe('Inventory Domain Logic & Transaction Unit Tests', () => {
     expect(loc.code).toBe('CAB 1- Level 2- Right side');
   });
 
-  it('9. Enforces the 4-role permission matrix (Director, Professor, Technician, PhD Student) at action level', () => {
+  it('9. Enforces the role permission matrix (Director, Secretary, Professor, Technician, PhD Student) at action level', () => {
     // 1. DIRECTOR (ADMIN) — Full access, no restrictions
     expect(hasRolePermission(UserRole.ADMIN, PermissionAction.MANAGE_USERS)).toBe(true);
     expect(hasRolePermission(UserRole.ADMIN, PermissionAction.ARCHIVE_REMOVE_CHEMICAL)).toBe(true);
     expect(hasRolePermission(UserRole.ADMIN, PermissionAction.APPROVE_STOCK_ADJUSTMENT)).toBe(true);
 
-    // 2. PROFESSOR — Can approve purchases & disposals, add chemicals, export, but CANNOT manage users or permanently delete
+    // 2. SECRETARY — Exactly the same permissions as the Director
+    for (const action of Object.values(PermissionAction)) {
+      expect(hasRolePermission(UserRole.SECRETARY, action)).toBe(true);
+    }
+
+    // 3. PROFESSOR — Can approve purchases & disposals, add chemicals, export, but CANNOT manage users or permanently delete
     expect(hasRolePermission(UserRole.PROFESSOR, PermissionAction.APPROVE_PURCHASE_REQUEST)).toBe(true);
     expect(hasRolePermission(UserRole.PROFESSOR, PermissionAction.APPROVE_DISPOSAL_REQUEST)).toBe(true);
     expect(hasRolePermission(UserRole.PROFESSOR, PermissionAction.MANAGE_USERS)).toBe(false);
     expect(hasRolePermission(UserRole.PROFESSOR, PermissionAction.ARCHIVE_REMOVE_CHEMICAL)).toBe(false);
 
-    // 3. TECHNICIAN — Can submit adjustments, receive deliveries, record approved disposal, move locations, CANNOT approve own adjustments/disposals/purchases
+    // 4. TECHNICIAN — Can submit adjustments, receive deliveries, record approved disposal, move locations, CANNOT approve own adjustments/disposals/purchases
     expect(hasRolePermission(UserRole.TECHNICIAN, PermissionAction.SUBMIT_STOCK_ADJUSTMENT)).toBe(true);
     expect(hasRolePermission(UserRole.TECHNICIAN, PermissionAction.APPROVE_STOCK_ADJUSTMENT)).toBe(false);
     expect(hasRolePermission(UserRole.TECHNICIAN, PermissionAction.APPROVE_DISPOSAL_REQUEST)).toBe(false);
     expect(hasRolePermission(UserRole.TECHNICIAN, PermissionAction.RECORD_APPROVED_DISPOSAL)).toBe(true);
     expect(hasRolePermission(UserRole.TECHNICIAN, PermissionAction.RECEIVE_VALIDATED_DELIVERY)).toBe(true);
 
-    // 4. PHD STUDENT — Can record consumption, create purchase/disposal requests, CANNOT add/edit master chemicals or adjust stock
+    // 5. PHD STUDENT — Can record consumption, create purchase/disposal requests, CANNOT add/edit master chemicals or adjust stock
     expect(hasRolePermission(UserRole.PHD_STUDENT, PermissionAction.RECORD_CONSUMPTION)).toBe(true);
     expect(hasRolePermission(UserRole.PHD_STUDENT, PermissionAction.CREATE_PURCHASE_REQUEST)).toBe(true);
     expect(hasRolePermission(UserRole.PHD_STUDENT, PermissionAction.CREATE_DISPOSAL_REQUEST)).toBe(true);
@@ -298,6 +303,16 @@ describe('Inventory Domain Logic & Transaction Unit Tests', () => {
         fullName: 'Director',
         email: 'director@lcsco.dz',
         role: UserRole.ADMIN,
+        laboratoryIds: ['LCSCO'],
+        status: UserStatus.ACTIVE,
+        createdAt: '2026-10-06T08:00:00Z',
+        lastLogin: '2026-10-06T08:00:00Z',
+      },
+      {
+        uid: 'u-secretary',
+        fullName: 'Secretary',
+        email: 'secretary@lcsco.dz',
+        role: UserRole.SECRETARY,
         laboratoryIds: ['LCSCO'],
         status: UserStatus.ACTIVE,
         createdAt: '2026-10-06T08:00:00Z',
@@ -373,6 +388,7 @@ describe('Inventory Domain Logic & Transaction Unit Tests', () => {
 
     const notifiedUserIds = firstReport.updatedNotifications.map((n) => n.recipientUserId);
     expect(notifiedUserIds).toContain('u-director');
+    expect(notifiedUserIds).toContain('u-secretary');
     expect(notifiedUserIds).toContain('u-technician');
     expect(notifiedUserIds).not.toContain('u-professor');
     expect(notifiedUserIds).not.toContain('u-phd-2');

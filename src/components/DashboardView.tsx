@@ -19,6 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   ContainerStatus,
   StockRuptureStatus,
+  UserRole,
 } from '../types/inventory';
 import {
   formatRoleLabel,
@@ -129,8 +130,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           `Bienvenue, ${userDisplayName}`
         ),
         greetingSubtitle: tr(
-          'Director & Laboratory Administrator — Here is your daily governance and inventory status summary:',
-          'Directeur du Laboratoire — Voici vos rappels de gouvernance et l’état actuel de l’inventaire :'
+          profile?.role === UserRole.SECRETARY
+            ? 'Secretary & Laboratory Administrator — Here is your daily governance and inventory status summary:'
+            : 'Director & Laboratory Administrator — Here is your daily governance and inventory status summary:',
+          profile?.role === UserRole.SECRETARY
+            ? 'Secrétaire du Laboratoire — Voici vos rappels de gouvernance et l’état actuel de l’inventaire :'
+            : 'Directeur du Laboratoire — Voici vos rappels de gouvernance et l’état actuel de l’inventaire :'
         ),
         bullets: [
           {

@@ -42,23 +42,27 @@ export function formatTimestamp(ts: unknown): string {
 
 export const LCSCO_FOUR_ACCOUNT_ROLES: UserRole[] = [
   UserRole.ADMIN,
+  UserRole.SECRETARY,
   UserRole.PROFESSOR,
   UserRole.TECHNICIAN,
   UserRole.STUDENT_RESEARCHER,
 ];
 
 /**
- * Formats the 4 official laboratory roles:
+ * Formats the official laboratory roles:
  * 1. DIRECTOR — Full Administrator (`UserRole.ADMIN`)
- * 2. PROFESSOR — Supervisor / Research Group Manager (`UserRole.PROFESSOR`)
- * 3. LAB ENGINEER — Operational Inventory Manager (`UserRole.TECHNICIAN`)
- * 4. PHD STUDENT — Researcher / Inventory User (`UserRole.STUDENT_RESEARCHER` / `UserRole.PHD_STUDENT`)
+ * 2. SECRETARY — Full Administrator (`UserRole.SECRETARY`)
+ * 3. PROFESSOR — Supervisor / Research Group Manager (`UserRole.PROFESSOR`)
+ * 4. LAB ENGINEER — Operational Inventory Manager (`UserRole.TECHNICIAN`)
+ * 5. PHD STUDENT — Researcher / Inventory User (`UserRole.STUDENT_RESEARCHER` / `UserRole.PHD_STUDENT`)
  */
 export function formatRoleLabel(role: UserRole, customLang?: AppLanguage): string {
   const lang = customLang || getStoredLang();
   switch (role) {
     case UserRole.ADMIN:
       return lang === 'fr' ? 'Directeur (Administrateur Complet)' : 'Director (Full Administrator)';
+    case UserRole.SECRETARY:
+      return lang === 'fr' ? 'Secrétaire (Administrateur Complet)' : 'Secretary (Full Administrator)';
     case UserRole.PROFESSOR:
       return lang === 'fr' ? 'Professeur (Superviseur)' : 'Professor (Supervisor)';
     case UserRole.TECHNICIAN:
@@ -78,6 +82,8 @@ export function formatShortRoleName(role: UserRole): string {
   switch (role) {
     case UserRole.ADMIN:
       return lang === 'fr' ? 'Directeur' : 'Director';
+    case UserRole.SECRETARY:
+      return lang === 'fr' ? 'Secrétaire' : 'Secretary';
     case UserRole.PROFESSOR:
       return lang === 'fr' ? 'Professeur' : 'Professor';
     case UserRole.TECHNICIAN:

@@ -7,9 +7,10 @@ import type { Timestamp } from 'firebase/firestore';
 
 export enum UserRole {
   ADMIN = 'ADMIN', // 1. DIRECTOR — Full Administrator
-  PROFESSOR = 'PROFESSOR', // 2. PROFESSOR — Supervisor / Research Group Manager
-  TECHNICIAN = 'TECHNICIAN', // 3. LAB ENGINEER — Operational Inventory Manager
-  STUDENT_RESEARCHER = 'STUDENT_RESEARCHER', // 4. PHD STUDENT — Researcher / Inventory User
+  SECRETARY = 'SECRETARY', // 2. SECRETARY — Full Administrator (same authority as Director)
+  PROFESSOR = 'PROFESSOR', // 3. PROFESSOR — Supervisor / Research Group Manager
+  TECHNICIAN = 'TECHNICIAN', // 4. LAB ENGINEER — Operational Inventory Manager
+  STUDENT_RESEARCHER = 'STUDENT_RESEARCHER', // 5. PHD STUDENT — Researcher / Inventory User
   PHD_STUDENT = 'STUDENT_RESEARCHER', // Alias for PHD STUDENT
   GUEST = 'GUEST',
 }
@@ -120,11 +121,12 @@ export const STOCK_ADJUSTMENT_REASONS = [
 export type StockAdjustmentReasonType = (typeof STOCK_ADJUSTMENT_REASONS)[number];
 
 /**
- * Granular Permission Matrix for the 4 Laboratory Roles:
+ * Granular Permission Matrix for the Laboratory Roles:
  * 1. DIRECTOR (ADMIN) — Full Administrator
- * 2. PROFESSOR — Supervisor / Research Group Manager
- * 3. LAB ENGINEER (TECHNICIAN) — Operational Inventory Manager
- * 4. PHD STUDENT (STUDENT_RESEARCHER) — Researcher / Inventory User
+ * 2. SECRETARY (SECRETARY) — Full Administrator (Director-equivalent)
+ * 3. PROFESSOR — Supervisor / Research Group Manager
+ * 4. LAB ENGINEER (TECHNICIAN) — Operational Inventory Manager
+ * 5. PHD STUDENT (STUDENT_RESEARCHER) — Researcher / Inventory User
  */
 export enum PermissionAction {
   VIEW_INVENTORY = 'VIEW_INVENTORY',
@@ -352,7 +354,7 @@ export interface UserProfile {
   avatarUrl?: string;
   isDemoAccount?: boolean;
   /**
-   * Server-managed flag: set by the provisioning API when the Director creates
+   * Server-managed flag: set by the provisioning API when the Director or Secretary creates
    * an account with a temporary password; cleared only through
    * POST /api/admin/complete-password-change after the user sets a new one.
    * Never writable by any client (rules keep it out of every allowlist).

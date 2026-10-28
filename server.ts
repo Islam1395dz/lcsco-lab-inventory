@@ -21,6 +21,7 @@ const __dirname = path.dirname(__filename);
  * ========================================================================== */
 import {
   getAuth as getAdminAuth,
+  type Auth as AdminAuth,
   type UserRecord,
 } from 'firebase-admin/auth';
 import {
@@ -29,7 +30,6 @@ import {
   applicationDefault,
   cert,
   type App as AdminApp,
-  type Auth as AdminAuth,
 } from 'firebase-admin/app';
 import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import type { Response, NextFunction, Request } from 'express';
@@ -479,9 +479,10 @@ async function deliverMail(mail: OutgoingMail): Promise<MailResult> {
 }
 
 /* ============================================================================
- * Director-controlled account provisioning
+ * Administrator-controlled account provisioning
  * ========================================================================== */
-const ASSIGNABLE_ROLES = ['ADMIN', 'PROFESSOR', 'TECHNICIAN', 'PHD_STUDENT', 'STUDENT_RESEARCHER'];
+const ADMIN_ROLES = ['ADMIN', 'SECRETARY'];
+const ASSIGNABLE_ROLES = [...ADMIN_ROLES, 'PROFESSOR', 'TECHNICIAN', 'PHD_STUDENT', 'STUDENT_RESEARCHER'];
 
 /**
  * Copy the authoritative Firestore profile role into the Firebase Auth custom
@@ -571,7 +572,7 @@ async function sendWelcomeEmail(
   const text =
     `Welcome to LCSCO Inventory\n` +
     `Laboratoire de Catalyse et Synthèse en Chimie Organique\n\n` +
-    `The Laboratory Director has created your account for the chemical inventory system.\n\n` +
+    `The Laboratory Director or Secretary has created your account for the chemical inventory system.\n\n` +
     `Username (email): ${to}\n` +
     `Temporary password: ${tempPassword}\n\n` +
     `Choose your password: ${actionUrl}\n` +
@@ -580,7 +581,7 @@ async function sendWelcomeEmail(
     `password and you will be asked to choose a new one.\n\n` +
     `SECURITY: at your first sign-in you will be asked to choose your own personal\n` +
     `password. This temporary password stops working as soon as you do.\n\n` +
-    `If you did not expect this email, contact the Laboratory Director.`;
+    `If you did not expect this email, contact the Laboratory Director or Secretary.`;
   const safeTo = escapeHtml(to);
   const safePassword = escapeHtml(tempPassword);
   const safeAction = escapeHtml(actionUrl);
@@ -598,7 +599,7 @@ async function sendWelcomeEmail(
           <td style="padding:28px;">
             <p style="margin:0 0 12px;font-size:15px;color:#0F172A;">Hello,</p>
             <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155;">
-              The Laboratory Director has created your account for the LCSCO chemical inventory system.
+              The Laboratory Director or Secretary has created your account for the LCSCO chemical inventory system.
               Below are your sign-in details.
             </p>
             <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #CBD5E1;border-radius:8px;background:#F8FAFC;">
@@ -630,7 +631,7 @@ async function sendWelcomeEmail(
           <td style="padding:16px 28px;border-top:1px solid #E2E8F0;background:#F8FAFC;">
             <p style="margin:0;font-size:11px;line-height:1.5;color:#94A3B8;">
               LCSCO Inventory · Université de Tlemcen<br />
-              If you did not expect this email, contact the Laboratory Director.
+              If you did not expect this email, contact the Laboratory Director or Secretary.
             </p>
           </td>
         </tr>
@@ -1197,7 +1198,7 @@ async function startServer() {
             emailVerified: record.emailVerified,
             disabled: record.disabled,
             customClaims: record.customClaims || null,
-            providers: record.providerData.map((p) => p.providerId),
+            providers: record.providerData.map((p: { providerId: string }) => p.providerId),
           };
         } catch (err: any) {
           authUsers[id] = { error: err?.code || 'lookup_failed' };
@@ -1254,7 +1255,7 @@ async function startServer() {
     importLimiter,
     express.json({ limit: '10mb' }),
     requireAuth,
-    requireRole('ADMIN', 'PROFESSOR', 'TECHNICIAN'),
+    requireRole(...ADMIN_ROLES, 'PROFESSOR', 'TECHNICIAN'),
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileBase64, mimeType, rawText } = req.body || {};
@@ -1398,7 +1399,7 @@ CRITICAL FORMATTING RULES:
   );
 
   /* ==========================================================================
-   * Director-controlled account provisioning (requires ADMIN role)
+   * Administrator-controlled account provisioning (requires ADMIN or SECRETARY role)
    *
    * The Admin SDK bypasses Firestore security rules, so these endpoints are
    * the ONLY supported way to create Firebase Auth accounts, delete accounts,
@@ -1411,7 +1412,7 @@ CRITICAL FORMATTING RULES:
     globalLimiter,
     adminActionLimiter,
     requireAuth,
-    requireRole('ADMIN'),
+    requireRole(...ADMIN_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         if (!adminAuthInstance) {
@@ -1508,7 +1509,7 @@ CRITICAL FORMATTING RULES:
     globalLimiter,
     adminActionLimiter,
     requireAuth,
-    requireRole('ADMIN'),
+    requireRole(...ADMIN_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         if (!adminAuthInstance) {
@@ -1521,7 +1522,7 @@ CRITICAL FORMATTING RULES:
           return;
         }
         if (targetUid === req.user?.uid) {
-          res.status(400).json({ error: 'Directors cannot delete their own account.' });
+          res.status(400).json({ error: 'Directors and Secretaries cannot delete their own account.' });
           return;
         }
         try {
@@ -1573,7 +1574,7 @@ CRITICAL FORMATTING RULES:
     globalLimiter,
     adminActionLimiter,
     requireAuth,
-    requireRole('ADMIN'),
+    requireRole(...ADMIN_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         if (!adminAuthInstance) {
@@ -1651,7 +1652,7 @@ CRITICAL FORMATTING RULES:
     globalLimiter,
     adminActionLimiter,
     requireAuth,
-    requireRole('ADMIN'),
+    requireRole(...ADMIN_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         if (!adminAuthInstance) {
@@ -1730,7 +1731,7 @@ CRITICAL FORMATTING RULES:
     globalLimiter,
     adminActionLimiter,
     requireAuth,
-    requireRole('ADMIN'),
+    requireRole(...ADMIN_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         if (!adminAuthInstance) {

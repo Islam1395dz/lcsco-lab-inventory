@@ -25,6 +25,7 @@ import {
   UserRole,
   UserStatus,
 } from '../types/inventory';
+import { ADMIN_ROLES, isAdminRole } from '../utils/roles';
 
 export interface CreateRoleNotificationParams {
   type: NotificationType | string;
@@ -45,28 +46,28 @@ export interface CreateRoleNotificationParams {
 
 /**
  * Default role routing matrix per notification type when `targetRoles` is not explicitly overridden.
- * Strictly adheres to the 4-role notification matrix:
- * - Director: Stock rupture reports, purchase requests, disposal requests, stock adjustment requests, critical inventory alerts
+ * Strictly follows the laboratory notification matrix:
+ * - Director / Secretary: Stock rupture reports, purchase requests, disposal requests, stock adjustment requests, critical inventory alerts
  * - Technician: Stock rupture reports, low-stock alerts, expiration alerts, purchase deliveries, disposal tasks, stock adjustment requests
  * - Professor: Purchase requests, disposal requests, low-stock alerts, important stock issues
  * - PhD Student: Their own requests, request approval/rejection, purchase availability, important inventory changes
  */
 export const DEFAULT_ROLES_BY_NOTIFICATION_TYPE: Record<string, UserRole[]> = {
-  [NotificationType.STOCK_RUPTURE]: [UserRole.ADMIN, UserRole.TECHNICIAN],
-  [NotificationType.LOW_STOCK]: [UserRole.ADMIN, UserRole.PROFESSOR, UserRole.TECHNICIAN],
+  [NotificationType.STOCK_RUPTURE]: [...ADMIN_ROLES, UserRole.TECHNICIAN],
+  [NotificationType.LOW_STOCK]: [...ADMIN_ROLES, UserRole.PROFESSOR, UserRole.TECHNICIAN],
   [NotificationType.EXPIRING_SOON]: [UserRole.TECHNICIAN, UserRole.PROFESSOR],
-  [NotificationType.EXPIRED_CHEMICAL]: [UserRole.ADMIN, UserRole.TECHNICIAN, UserRole.PROFESSOR],
-  [NotificationType.PURCHASE_REQUEST]: [UserRole.ADMIN, UserRole.PROFESSOR],
+  [NotificationType.EXPIRED_CHEMICAL]: [...ADMIN_ROLES, UserRole.TECHNICIAN, UserRole.PROFESSOR],
+  [NotificationType.PURCHASE_REQUEST]: [...ADMIN_ROLES, UserRole.PROFESSOR],
   [NotificationType.PURCHASE_APPROVED]: [UserRole.TECHNICIAN],
   [NotificationType.PURCHASE_RECEIVED]: [
-    UserRole.ADMIN,
+    ...ADMIN_ROLES,
     UserRole.PROFESSOR,
     UserRole.STUDENT_RESEARCHER,
   ],
-  [NotificationType.DISPOSAL_REQUEST]: [UserRole.ADMIN, UserRole.PROFESSOR, UserRole.TECHNICIAN],
-  [NotificationType.STOCK_ADJUSTMENT_REQUEST]: [UserRole.ADMIN, UserRole.TECHNICIAN],
+  [NotificationType.DISPOSAL_REQUEST]: [...ADMIN_ROLES, UserRole.PROFESSOR, UserRole.TECHNICIAN],
+  [NotificationType.STOCK_ADJUSTMENT_REQUEST]: [...ADMIN_ROLES, UserRole.TECHNICIAN],
   [NotificationType.SYSTEM_NOTIFICATION]: [
-    UserRole.ADMIN,
+    ...ADMIN_ROLES,
     UserRole.PROFESSOR,
     UserRole.TECHNICIAN,
     UserRole.STUDENT_RESEARCHER,
@@ -85,11 +86,15 @@ export function buildNotificationsForRecipients(
   const effectiveRoles =
     params.targetRoles ?? DEFAULT_ROLES_BY_NOTIFICATION_TYPE[params.type] ?? [];
   const explicitUserIds = new Set(params.targetUserIds || []);
+  const targetsAdministrators = effectiveRoles.some((role) => isAdminRole(role));
 
   const recipients = allUsers.filter((u) => {
     if (u.status === UserStatus.DEACTIVATED) return false;
     if (params.excludeCreator && u.uid === params.createdByUserId) return false;
     if (explicitUserIds.has(u.uid)) return true;
+    // ADMIN and SECRETARY are interchangeable for routing purposes: a
+    // notification addressed to "the Director" must also reach the Secretary.
+    if (targetsAdministrators && isAdminRole(u.role)) return true;
     return effectiveRoles.includes(u.role);
   });
 
@@ -342,7 +347,7 @@ export function processStockRuptureReport(params: {
       title: `Stock rupture reported: ${chemName}`,
       message: `${params.reporter.fullName} reported "${chemName} — stock rupture" on bottle ${params.container.containerId} (Location: ${params.container.location.code}). Digital inventory currently lists ${params.container.currentQuantity} ${params.container.unit} (${params.container.status}). Please inspect physical stock. Comment: "${cleanComment}"`,
       priority: params.priority,
-      targetRoles: [UserRole.ADMIN, UserRole.TECHNICIAN],
+      targetRoles: [...ADMIN_ROLES, UserRole.TECHNICIAN],
       createdByUserId: params.reporter.uid,
       createdByName: params.reporter.fullName,
       relatedContainerId: params.container.containerId,
@@ -365,7 +370,7 @@ export function processStockRuptureReport(params: {
         {
           type: NotificationType.STOCK_RUPTURE,
           title: `Your Stock Rupture Report Submitted: ${chemName}`,
-          message: `Your stock rupture report (${ruptureId}) for ${chemName} (${params.container.containerId}) has been sent to the Laboratory Director and Technician for physical verification.`,
+          message: `Your stock rupture report (${ruptureId}) for ${chemName} (${params.container.containerId}) has been sent to the Laboratory Director/Secretary and Technician for physical verification.`,
           priority: params.priority,
           targetRoles: [],
           targetUserIds: [params.reporter.uid],
@@ -459,26 +464,26 @@ export function transitionStockRuptureWorkflow(params: {
   if (params.nextStatus === StockRuptureStatus.UNDER_REVIEW) {
     statusTitle = `Stock Rupture Under Review: ${target.chemicalName}`;
     statusMessage = `${params.actor.fullName} is inspecting physical stock for ${target.chemicalName} (${target.containerId}) at ${target.locationCode}.`;
-    targetRoles = [UserRole.ADMIN];
+    targetRoles = [...ADMIN_ROLES];
   } else if (params.nextStatus === StockRuptureStatus.CONFIRMED) {
     statusTitle = `Stock Rupture Confirmed: ${target.chemicalName}`;
     statusMessage = `Physical inspection by ${params.actor.fullName} CONFIRMED stock rupture for ${target.chemicalName} (${target.containerId}). Stock adjustment / replenishment workflow initiated.${
       params.resolutionNote ? ` Note: "${params.resolutionNote}"` : ''
     }`;
     // Notify Director, Professor (important stock issue for research group), and reporting PhD students
-    targetRoles = [UserRole.ADMIN, UserRole.PROFESSOR];
+    targetRoles = [...ADMIN_ROLES, UserRole.PROFESSOR];
   } else if (params.nextStatus === StockRuptureStatus.RESOLVED) {
     statusTitle = `Stock Rupture Resolved: ${target.chemicalName}`;
     statusMessage = `Stock rupture ${target.ruptureId} for ${target.chemicalName} (${target.containerId}) has been RESOLVED by ${params.actor.fullName}.${
       params.resolutionNote ? ` Note: "${params.resolutionNote}"` : ''
     }`;
-    targetRoles = [UserRole.ADMIN, UserRole.PROFESSOR];
+    targetRoles = [...ADMIN_ROLES, UserRole.PROFESSOR];
   } else if (params.nextStatus === StockRuptureStatus.REJECTED) {
     statusTitle = `Stock Rupture Report Rejected: ${target.chemicalName}`;
     statusMessage = `Physical inspection by ${params.actor.fullName} found stock available for ${target.chemicalName} (${target.containerId} at ${target.locationCode}). Report ${target.ruptureId} was marked REJECTED.${
       params.resolutionNote ? ` Note: "${params.resolutionNote}"` : ''
     }`;
-    targetRoles = [UserRole.ADMIN];
+    targetRoles = [...ADMIN_ROLES];
   }
 
   const followUpNotifications = buildNotificationsForRecipients(

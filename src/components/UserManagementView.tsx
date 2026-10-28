@@ -82,8 +82,8 @@ export const UserManagementView: React.FC = () => {
       if (!isAdmin) {
         throw new Error(
           tr(
-            'Only the Director can add or remove profiles.',
-            'Seul le Directeur peut ajouter ou supprimer des profils.'
+            'Only the Director or Secretary can add or remove profiles.',
+            'Seul le Directeur ou le Secrétaire peut ajouter ou supprimer des profils.'
           )
         );
       }
@@ -208,8 +208,8 @@ export const UserManagementView: React.FC = () => {
       if (targetUser.uid === profile.uid) {
         throw new Error(
           tr(
-            'Cannot remove your own active Director profile.',
-            'Impossible de supprimer votre propre profil Directeur actif.'
+            'Cannot remove your own active administrator profile.',
+            'Impossible de supprimer votre propre profil administrateur actif.'
           )
         );
       }
@@ -304,8 +304,8 @@ export const UserManagementView: React.FC = () => {
       if (targetUser.uid === profile?.uid) {
         throw new Error(
           tr(
-            'Cannot deactivate your own active Director session.',
-            'Impossible de désactiver votre propre session Directeur.'
+            'Cannot deactivate your own active administrator session.',
+            'Impossible de désactiver votre propre session administrateur.'
           )
         );
       }
@@ -349,12 +349,12 @@ export const UserManagementView: React.FC = () => {
       <div className="p-8 bg-white border border-slate-200 rounded-md text-center space-y-3 max-w-md mx-auto">
         <Lock className="w-6 h-6 text-rose-500 mx-auto" />
         <div className="text-sm font-semibold text-slate-900">
-          {tr('Director Access Required', 'Accès réservé au Directeur')}
+          {tr('Administrator Access Required', 'Accès administrateur requis')}
         </div>
         <p className="text-xs text-slate-600">
           {tr(
-            'Only the Director can manage users and roles.',
-            'Seul le Directeur peut gérer les utilisateurs et les rôles.'
+            'Only the Director or Secretary can manage users and roles.',
+            'Seuls le Directeur ou le Secrétaire peuvent gérer les utilisateurs et les rôles.'
           )}
         </p>
         <Button variant="primary" onClick={signOut}>

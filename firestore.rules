@@ -71,18 +71,21 @@ service cloud.firestore {
 
     function isAdmin() {
       return isBootstrappedAdmin() ||
-        tokenRole() == 'ADMIN';
+        tokenRole() == 'ADMIN' ||
+        tokenRole() == 'SECRETARY';
     }
 
     function isAdminOrProf() {
       return isBootstrappedAdmin() ||
         tokenRole() == 'ADMIN' ||
+        tokenRole() == 'SECRETARY' ||
         tokenRole() == 'PROFESSOR';
     }
 
     function isTechOrAbove() {
       return isBootstrappedAdmin() ||
         tokenRole() == 'ADMIN' ||
+        tokenRole() == 'SECRETARY' ||
         tokenRole() == 'PROFESSOR' ||
         tokenRole() == 'TECHNICIAN';
     }
@@ -90,6 +93,7 @@ service cloud.firestore {
     function isActiveLabMember() {
       return isBootstrappedAdmin() ||
         tokenRole() == 'ADMIN' ||
+        tokenRole() == 'SECRETARY' ||
         tokenRole() == 'PROFESSOR' ||
         tokenRole() == 'TECHNICIAN' ||
         tokenRole() == 'PHD_STUDENT' ||
@@ -131,6 +135,7 @@ service cloud.firestore {
         data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
         data.role is string && (
           data.role == 'ADMIN' ||
+          data.role == 'SECRETARY' ||
           data.role == 'PROFESSOR' ||
           data.role == 'TECHNICIAN' ||
           data.role == 'PHD_STUDENT' ||
@@ -205,6 +210,7 @@ service cloud.firestore {
 
     function isActiveMemberRole(role) {
       return role == 'ADMIN' ||
+        role == 'SECRETARY' ||
         role == 'PROFESSOR' ||
         role == 'TECHNICIAN' ||
         role == 'PHD_STUDENT' ||
@@ -219,6 +225,7 @@ service cloud.firestore {
      */
     function canUpdateContainer(role, incomingData, existingData) {
       return role == 'ADMIN' ||
+        role == 'SECRETARY' ||
         role == 'PROFESSOR' ||
         (isActiveMemberRole(role) &&
           existingData.status != 'DISPOSAL_REQUIRED' &&

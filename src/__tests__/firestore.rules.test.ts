@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 /**
  * Structural verification of the Firestore security rules.
@@ -9,7 +10,7 @@ import { existsSync, readFileSync } from 'fs';
  * payloads against `firebase emulators:exec`.
  */
 describe('Firestore Security Rules — security invariants present in rules source', () => {
-  const rulesPath = new URL('../firestore.rules', import.meta.url).pathname;
+  const rulesPath = fileURLToPath(new URL('../../firestore.rules', import.meta.url));
   const rulesContent = readFileSync(rulesPath, 'utf-8');
 
   it('keeps the default-deny catch-all as the first match block', () => {
@@ -39,6 +40,26 @@ describe('Firestore Security Rules — security invariants present in rules sour
   it('resolves roles from verified custom claims (and never self-assignment)', () => {
     expect(rulesContent).toContain('function tokenRole()');
     expect(rulesContent).toContain("request.auth.token.role is string");
+  });
+
+  it('treats SECRETARY as a full-administrator peer of ADMIN', () => {
+    const adminHelpers = rulesContent.slice(
+      rulesContent.indexOf('function isAdmin()'),
+      rulesContent.indexOf('// VALIDATION BLUEPRINTS')
+    );
+    expect(adminHelpers).toContain("tokenRole() == 'SECRETARY'");
+
+    const userValidation = rulesContent.slice(
+      rulesContent.indexOf('function isValidUser(data)'),
+      rulesContent.indexOf('function isValidLaboratory(data)')
+    );
+    expect(userValidation).toContain("data.role == 'SECRETARY'");
+
+    const containerPolicy = rulesContent.slice(
+      rulesContent.indexOf('function canUpdateContainer'),
+      rulesContent.indexOf('function isValidTransaction')
+    );
+    expect(containerPolicy).toContain("role == 'SECRETARY'");
   });
 
   it('isolates users/{uid} reads to owner and authorized roles', () => {
@@ -80,13 +101,21 @@ describe('Firestore Security Rules — security invariants present in rules sour
   });
 
   it('keeps transactions strictly append-only and server-timestamped', () => {
+    const validation = rulesContent.slice(
+      rulesContent.indexOf('function isValidTransaction'),
+      rulesContent.indexOf('function isValidPhysicalLocation')
+    );
+    expect(validation).toContain('data.timestamp == request.time');
+    expect(validation).toContain(
+      'math.abs(data.quantityBefore + data.quantityChange - data.quantityAfter) < 0.0001'
+    );
+
     const block = rulesContent.slice(
       rulesContent.indexOf('match /transactions/{transactionId}'),
       rulesContent.indexOf('match /physicalLocations/{locationId}')
     );
-    expect(block).toContain('data.timestamp == request.time');
+    expect(block).toContain('isValidTransaction(incoming())');
     expect(block).toContain('incoming().userId == request.auth.uid');
-    expect(block).toContain('data.quantityBefore + data.quantityChange == data.quantityAfter');
     expect(block).toContain('allow update: if false;');
     expect(block).toContain('allow delete: if false;');
   });
@@ -126,10 +155,18 @@ describe('Firestore Security Rules — security invariants present in rules sour
       rulesContent.indexOf('match /containers/{containerId}'),
       rulesContent.indexOf('match /transactions/{transactionId}')
     );
-    expect(block).toContain('exists(/databases/$(database)/documents/products/$(incoming().productId))');
-    expect(block).toContain('data.currentQuantity is number && data.currentQuantity >= 0');
+    expect(block).toContain('isValidContainer(incoming())');
+    expect(block).toContain(
+      'exists(/databases/$(database)/documents/products/$(incoming().productId))'
+    );
     expect(block).toContain('incoming().unit == existing().unit');
     expect(block).toContain('incoming().createdBy == request.auth.uid');
+
+    const validation = rulesContent.slice(
+      rulesContent.indexOf('function isValidContainer(data)'),
+      rulesContent.indexOf('function canUpdateContainer')
+    );
+    expect(validation).toContain('data.currentQuantity is number && data.currentQuantity >= 0');
   });
 
   it('enforces strict key allowlists and string size bounds across all entities', () => {
@@ -140,6 +177,8 @@ describe('Firestore Security Rules — security invariants present in rules sour
 
 describe('Rules test environment', () => {
   it('ships the emulator-backed payload suite referenced by the npm scripts', () => {
-    expect(existsSync(new URL('../scripts/rules.emulator.test.mjs', import.meta.url).pathname)).toBe(true);
+    expect(
+      existsSync(fileURLToPath(new URL('../../scripts/rules.emulator.test.mjs', import.meta.url)))
+    ).toBe(true);
   });
 });

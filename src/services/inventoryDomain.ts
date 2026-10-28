@@ -356,14 +356,16 @@ export function calculateCorrectionMutation(
 }
 
 /**
- * Role-Based Access Control (RBAC) Matrix for the 4 Laboratory Roles:
+ * Role-Based Access Control (RBAC) Matrix for the laboratory roles:
  * 1. DIRECTOR (`UserRole.ADMIN`) — Full Administrator
- * 2. PROFESSOR (`UserRole.PROFESSOR`) — Supervisor / Research Group Manager
- * 3. LAB ENGINEER (`UserRole.TECHNICIAN`) — Operational Inventory Manager
- * 4. PHD STUDENT (`UserRole.STUDENT_RESEARCHER` / `UserRole.PHD_STUDENT`) — Researcher / Inventory User
+ * 2. SECRETARY (`UserRole.SECRETARY`) — Full Administrator (Director-equivalent)
+ * 3. PROFESSOR (`UserRole.PROFESSOR`) — Supervisor / Research Group Manager
+ * 4. LAB ENGINEER (`UserRole.TECHNICIAN`) — Operational Inventory Manager
+ * 5. PHD STUDENT (`UserRole.STUDENT_RESEARCHER` / `UserRole.PHD_STUDENT`) — Researcher / Inventory User
  */
 const ROLE_PERMISSIONS_MAP: Record<UserRole, Set<PermissionAction>> = {
   [UserRole.ADMIN]: new Set(Object.values(PermissionAction)),
+  [UserRole.SECRETARY]: new Set(Object.values(PermissionAction)),
   [UserRole.PROFESSOR]: new Set([
     PermissionAction.VIEW_INVENTORY,
     PermissionAction.SEARCH_AND_FILTER,

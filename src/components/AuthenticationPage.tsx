@@ -19,7 +19,7 @@ import { LCSCOLogo } from './LCSCOLogo';
  *
  * Authentication is delegated entirely to Firebase Auth email/password
  * accounts. Google sign-in was removed by design: every account is created by
- * the Laboratory Director (who receives/forwards credentials via the
+ * the Laboratory Director or Secretary (who receives/forwards credentials via the
  * welcome-email flow), so nobody can appear unprovisioned.
  *
  * There is no local, plaintext credential comparison, and no anonymous
@@ -75,8 +75,8 @@ export const AuthenticationPage: React.FC = () => {
       } else if (code === 'auth/user-disabled') {
         setLocalAuthError(
           tr(
-            'This account has been deactivated. Please contact the Laboratory Director.',
-            'Ce compte a été désactivé. Contactez le Directeur du laboratoire.'
+            'This account has been deactivated. Please contact the Laboratory Director or Secretary.',
+            'Ce compte a été désactivé. Contactez le Directeur ou le Secrétaire du laboratoire.'
           )
         );
       } else if (code === 'auth/operation-not-allowed') {
@@ -221,16 +221,16 @@ export const AuthenticationPage: React.FC = () => {
 
           <p className="text-center text-[11px] text-slate-500">
             {tr(
-              'Accounts are created by the Laboratory Director. Ask them to add you from the Users administration screen — a welcome email with your temporary password will be sent to you.',
-              "Les comptes sont créés par le Directeur du laboratoire. Demandez-lui de vous ajouter depuis l'écran d'administration des Utilisateurs — un e-mail de bienvenue avec votre mot de passe temporaire vous sera envoyé."
+              'Accounts are created by the Laboratory Director or Secretary. Ask them to add you from the Users administration screen — a welcome email with your temporary password will be sent to you.',
+              "Les comptes sont créés par le Directeur ou le Secrétaire du laboratoire. Demandez-leur de vous ajouter depuis l'écran d'administration des Utilisateurs — un e-mail de bienvenue avec votre mot de passe temporaire vous sera envoyé."
             )}
           </p>
         </div>
 
         <p className="text-center text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
           {tr(
-            'Accounts are provisioned by the Laboratory Director. If you cannot access the inventory, make sure your account is active and your email is verified.',
-            'Les comptes sont provisionnés par le Directeur du laboratoire. Si vous ne pouvez pas accéder à l’inventaire, vérifiez que votre compte est actif et votre e-mail vérifié.'
+            'Accounts are provisioned by the Laboratory Director or Secretary. If you cannot access the inventory, make sure your account is active and your email is verified.',
+            'Les comptes sont provisionnés par le Directeur ou le Secrétaire du laboratoire. Si vous ne pouvez pas accéder à l’inventaire, vérifiez que votre compte est actif et votre e-mail vérifié.'
           )}
         </p>
       </div>

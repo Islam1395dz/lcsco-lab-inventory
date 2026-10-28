@@ -3,12 +3,12 @@
 ## 1. Data Invariants
 1. **Default-Deny Catch-All**: Unmatched paths are strictly rejected (`allow read, write: if false;`).
 2. **Email Verification & Authentication**: Every write requires `request.auth != null && request.auth.token.email_verified == true`.
-3. **PII Isolation (`users/{uid}`)**: User documents contain `email` and `fullName`. Only the document owner (`request.auth.uid == uid`) or a verified Admin/Professor (`isAdminOrProf()`) can read a user document. Non-admin users cannot self-assign `ADMIN`, `PROFESSOR`, or `TECHNICIAN` roles on registration, nor can they elevate their own `role` or `status` on update.
+3. **PII Isolation (`users/{uid}`)**: User documents contain `email` and `fullName`. Only the document owner (`request.auth.uid == uid`) or a verified Admin/Professor (`isAdminOrProf()`) can read a user document. Non-admin users cannot self-assign `ADMIN`, `SECRETARY`, `PROFESSOR`, or `TECHNICIAN` roles on registration, nor can they elevate their own `role` or `status` on update.
 4. **Relational Existence (`containers`, `transactions`)**:
    - A `container` cannot be created unless `exists(/databases/$(database)/documents/products/$(incoming().productId))` and `exists(/databases/$(database)/documents/laboratories/$(incoming().laboratoryId))` are true.
    - A `transaction` cannot be created unless `exists(/databases/$(database)/documents/containers/$(incoming().containerId))` and `exists(/databases/$(database)/documents/products/$(incoming().productId))` are true.
 5. **Immutable Audit Trail (`transactions/{transactionId}`)**:
-   - Strictly append-only. `allow update, delete: if false;` for ALL users, including `ADMIN`.
+   - Strictly append-only. `allow update, delete: if false;` for ALL users, including `ADMIN` and `SECRETARY`.
    - `userId` must match `request.auth.uid`, and `timestamp` must equal `request.time`.
 6. **Negative Stock & Terminal State Locking (`containers/{containerId}`)**:
    - `currentQuantity >= 0` and `initialQuantity > 0` at all times.
@@ -117,14 +117,14 @@ npm run emulators    # firebase emulators:exec --rules=firestore.rules + vitest
 | Area | Change |
 | --- | --- |
 | Identity | Firebase Auth only (Google + email/password, **no anonymous**). Bootstrap admin = verified `director@lcsco.dz` (single source; cannot be spoofed with an unverified address). |
-| Roles | Resolved from verified Firebase ID-token custom claims (`request.auth.token.role`), with a migration fallback to the Firestore profile document. Self-assignment of roles (create or update) is impossible for any non-admin. |
+| Roles | Resolved from verified Firebase ID-token custom claims (`request.auth.token.role`), with a migration fallback to the Firestore profile document. `SECRETARY` is a full-administrator peer of `ADMIN` in the rules, API, and UI. Self-assignment of roles (create or update) is impossible for any non-admin. |
 | Credentials | The `password` / `mustChangePassword` profile fields, the `LCSCO-2026` universal code, `lcsco_pass_*` localStorage mirrors, and all client-side password comparison UI are removed. Passwords belong to Firebase Authentication. |
 | `users/{uid}` | Reads bound to `isOwner(uid) || isAdminOrProf() || isActiveLabMember()`; writes blocked to credential-like fields; role/status changes admin-only. |
 | Audit trail | `transactions` append-only (`update`/`delete` false), `userId == request.auth.uid`, `timestamp == request.time`, quantity conservation enforced. |
 | Actor authenticity | `stockRuptureRequests.reportedByUid == request.auth.uid`, `notifications.createdByUserId == request.auth.uid`, `adjustmentRequests/disposalRequests/purchaseRequests.requestedByUid == request.auth.uid`. |
 | Separation of duties | Adjustment/disposal/purchase approvals require a different reviewer (`requestedByUid != request.auth.uid`) and only allow PENDING → APPROVED/REJECTED single-step transitions. |
 | Sentinel feature | **JARVIS removed entirely** — component, backend tools service, all `/api/jarvis/*` routes, TTS/proxy surface, Gemini bundling in the client. |
-| Express API | No unauthenticated state store (`/api/shared-state*` removed). Single privileged endpoint `/api/inventory/import-document`, gated by `requireAuth` (ID-token verification via Firebase Admin) + `requireRole(ADMIN, PROFESSOR, TECHNICIAN)`, plus `helmet`, `express-rate-limit` (global 300/15min; import 10/15min), cross-origin allowlist, and 10 MB scoped body limit (100 KB default). |
+| Express API | No unauthenticated state store (`/api/shared-state*` removed). Single privileged endpoint `/api/inventory/import-document`, gated by `requireAuth` (ID-token verification via Firebase Admin) + `requireRole(ADMIN, SECRETARY, PROFESSOR, TECHNICIAN)`, plus `helmet`, `express-rate-limit` (global 300/15min; import 10/15min), cross-origin allowlist, and 10 MB scoped body limit (100 KB default). |
 | Demo data | No seeding into production Firestore on login (`seedInitialLabInventory`, `resetToFourTemporaryAccounts` deleted). Demo data survives only as client-side offline preview. |
 | Draft rules | `DRAFT_firestore.rules` deleted (contained the anonymous-admin clause). |
 
@@ -148,10 +148,10 @@ npm run emulators    # firebase emulators:exec --rules=firestore.rules + vitest
    without credentials the Admin SDK cannot verify tokens and every privileged endpoint
    (`/api/inventory/import-document`, `/api/admin/*`) fails closed with 401/503.
 
-### Director-controlled account provisioning (server-side)
+### Administrator-controlled account provisioning (server-side)
 
 Account lifecycle is additionally controlled through Admin-SDK endpoints (auth-gated,
-`requireAuth` + `requireRole('ADMIN')`, rate-limited) in `server.ts`:
+`requireAuth` + `requireRole('ADMIN', 'SECRETARY')`, rate-limited) in `server.ts`:
 
 - `POST /api/admin/create-user` — creates the Firebase Auth account with a
   **server-generated random temporary password**, writes the profile document,
@@ -160,7 +160,7 @@ Account lifecycle is additionally controlled through Admin-SDK endpoints (auth-g
   (transport selectable with `MAIL_TRANSPORT` when several are configured; the
   HTTP transports are usable on hosts that block outbound SMTP, such as Render's
   Free plan). The
-  temporary password is returned **once** to the Director as a fallback; it is
+  temporary password is returned **once** to the Director or Secretary as a fallback; it is
   never persisted.
 - `POST /api/admin/delete-user` — deletes the Auth account *and* the profile
   document together (self-deletion prohibited).

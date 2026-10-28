@@ -26,7 +26,7 @@
         },
         "role": {
           "type": "string",
-          "enum": ["ADMIN", "PROFESSOR", "TECHNICIAN", "PHD_STUDENT", "STUDENT_RESEARCHER", "GUEST"],
+          "enum": ["ADMIN", "SECRETARY", "PROFESSOR", "TECHNICIAN", "PHD_STUDENT", "STUDENT_RESEARCHER", "GUEST"],
           "description": "Assigned role governing permissions across inventory and audit workflows"
         },
         "laboratoryIds": {

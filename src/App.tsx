@@ -222,8 +222,8 @@ const MainShell: React.FC = () => {
             </h1>
             <p className="text-xs text-slate-500">
               {tr(
-                'Your laboratory profile is being prepared. If this screen persists, ask the Director to add you in the Users administration screen.',
-                'Votre profil de laboratoire est en cours de préparation. Si cet écran persiste, demandez au Directeur de vous ajouter depuis l’écran Utilisateurs.'
+                'Your laboratory profile is being prepared. If this screen persists, ask the Director or Secretary to add you in the Users administration screen.',
+                'Votre profil de laboratoire est en cours de préparation. Si cet écran persiste, demandez au Directeur ou au Secrétaire de vous ajouter depuis l’écran Utilisateurs.'
               )}
             </p>
             <button

@@ -26,6 +26,15 @@ import {
 import { auth, db, googleProvider, handleFirestoreError, parseDisplayError } from '../firebase';
 
 /**
+ * Human-readable label for the two full-administrator roles. Used in audit
+ * entries and notification text so a Secretary action is not attributed to a
+ * Director.
+ */
+function adminRoleLabel(role: UserRole | string | null | undefined): string {
+  return role === UserRole.SECRETARY ? 'Secretary' : 'Director';
+}
+
+/**
  * Ask the server to copy the authoritative Firestore role into this user's
  * Firebase Auth custom claims, then refresh the ID token. Rules can then use
  * the claim without document reads, which keeps member writes under the
@@ -109,6 +118,7 @@ import {
   updateFirestoreStockRupture,
   withdrawChemicalStock,
 } from '../services/inventoryService';
+import { isAdminRole } from '../utils/roles';
 import {
   buildNotificationsForRecipients,
   CreateRoleNotificationParams,
@@ -567,8 +577,8 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           if (!(emailVerified && verifiedEmail === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase())) {
             setError(
               tr(
-                'Your account is not provisioned yet. Ask the Laboratory Director to create your profile.',
-                'Votre compte n’est pas encore provisionné. Demandez au Directeur de créer votre profil.'
+                'Your account is not provisioned yet. Ask the Laboratory Director or Secretary to create your profile.',
+                'Votre compte n’est pas encore provisionné. Demandez au Directeur ou au Secrétaire de créer votre profil.'
               )
             );
             await firebaseSignOut(auth);
@@ -922,7 +932,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
   const referenceImportAttempted = useRef(false);
   useEffect(() => {
     if (!authReady || !profile || dataLoading) return;
-    if (profile.role !== UserRole.ADMIN) return;
+    if (!isAdminRole(profile.role)) return;
     if (referenceImportAttempted.current) return;
     let alreadyImported = false;
     try {
@@ -963,7 +973,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
   const isBootstrapped =
     firebaseUser?.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
-  const isAdmin = Boolean(effectiveProfile?.role === UserRole.ADMIN || isBootstrapped);
+  const isAdmin = Boolean(isAdminRole(effectiveProfile?.role) || isBootstrapped);
   const isProfessor = Boolean(effectiveProfile?.role === UserRole.PROFESSOR);
   const isTechnician = Boolean(effectiveProfile?.role === UserRole.TECHNICIAN);
   const isPhdStudent = Boolean(effectiveProfile?.role === UserRole.PHD_STUDENT);
@@ -1411,7 +1421,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.EDIT_CHEMICAL_INFO,
-      'Only the Director, Lab Engineer, or Professor can edit chemical records.'
+      'Only the Director, Secretary, Lab Engineer, or Professor can edit chemical records.'
     );
 
     const existingContainer = containers.find((c) => c.containerId === params.containerId);
@@ -1506,12 +1516,11 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
     const qtyDiff =
       Math.round((nextCurrQty - existingContainer.currentQuantity) * 10000) / 10000;
-    const roleLabel =
-      effectiveProfile.role === UserRole.ADMIN
-        ? 'Director'
-        : effectiveProfile.role === UserRole.TECHNICIAN
-        ? 'Lab Engineer'
-        : 'Professor';
+    const roleLabel = isAdminRole(effectiveProfile.role)
+      ? adminRoleLabel(effectiveProfile.role)
+      : effectiveProfile.role === UserRole.TECHNICIAN
+      ? 'Lab Engineer'
+      : 'Professor';
 
     const txId = `EDT-${Date.now().toString(36).toUpperCase()}`;
     const newTx: InventoryTransaction = {
@@ -1562,7 +1571,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.ARCHIVE_REMOVE_CHEMICAL,
-      'Only the Director or Lab Engineer can delete inventory items.'
+      'Only the Director, Secretary, or Lab Engineer can delete inventory items.'
     );
     if (firebaseUser) {
       deleteChemicalContainer({
@@ -1613,7 +1622,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.ARCHIVE_REMOVE_CHEMICAL,
-      'Only the Director or Lab Engineer can clear the inventory.'
+      'Only the Director, Secretary, or Lab Engineer can clear the inventory.'
     );
     updatePreviewState({
       products: [],
@@ -1912,12 +1921,9 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     comment?: string;
   }) => {
     if (!effectiveProfile) throw new Error('Authentication required.');
-    if (
-      effectiveProfile.role !== UserRole.ADMIN &&
-      effectiveProfile.role !== UserRole.TECHNICIAN
-    ) {
+    if (!isAdminRole(effectiveProfile.role) && effectiveProfile.role !== UserRole.TECHNICIAN) {
       throw new Error(
-        'Permission Denied: Only the Director or Lab Engineer can adjust container quantities directly.'
+        'Permission Denied: Only the Director, Secretary, or Lab Engineer can adjust container quantities directly.'
       );
     }
 
@@ -1939,7 +1945,9 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
 
     const txId = `ADJ-${Date.now().toString(36).toUpperCase()}`;
     const roleLabel =
-      effectiveProfile.role === UserRole.ADMIN ? 'Director' : 'Lab Engineer';
+      isAdminRole(effectiveProfile.role)
+        ? adminRoleLabel(effectiveProfile.role)
+        : 'Lab Engineer';
 
     const newNotifs = buildNotificationsForRecipients(allUsers, {
       type: NotificationType.STOCK_ADJUSTMENT_REQUEST,
@@ -1950,10 +1958,9 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         calc.newStatus === ContainerStatus.LOW_STOCK
           ? NotificationPriority.HIGH
           : NotificationPriority.MEDIUM,
-      targetRoles:
-        effectiveProfile.role === UserRole.ADMIN
-          ? [UserRole.TECHNICIAN, UserRole.PROFESSOR]
-          : [UserRole.ADMIN, UserRole.PROFESSOR],
+      targetRoles: isAdminRole(effectiveProfile.role)
+        ? [UserRole.TECHNICIAN, UserRole.PROFESSOR]
+        : [UserRole.ADMIN, UserRole.SECRETARY, UserRole.PROFESSOR],
       createdByUserId: effectiveProfile.uid,
       createdByName: effectiveProfile.fullName,
       relatedContainerId: container.containerId,
@@ -2134,7 +2141,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.REVIEW_STOCK_RUPTURE,
-      'Only a Lab Engineer or Director can inspect and update stock rupture reports.'
+      'Only a Lab Engineer, Director, or Secretary can inspect and update stock rupture reports.'
     );
 
     const result = transitionStockRuptureWorkflow({
@@ -2357,7 +2364,8 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     );
 
     const reqId = `ADJ-${Date.now().toString(36).toUpperCase()}`;
-    const isDirector = effectiveProfile.role === UserRole.ADMIN;
+    const isAdminActor = isAdminRole(effectiveProfile.role);
+    const adminLabel = adminRoleLabel(effectiveProfile.role);
     const chemName = product?.chemicalName || container.productId;
 
     const newRequest: StockAdjustmentRequest = {
@@ -2376,8 +2384,8 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       requestedByName: effectiveProfile.fullName,
       requestedByRole: effectiveProfile.role,
       requestedAt: new Date().toISOString(),
-      status: isDirector ? 'APPROVED' : 'PENDING',
-      ...(isDirector
+      status: isAdminActor ? 'APPROVED' : 'PENDING',
+      ...(isAdminActor
         ? {
             approverUid: effectiveProfile.uid,
             approverName: effectiveProfile.fullName,
@@ -2391,14 +2399,16 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       saveFirestoreAdjustmentRequest(newRequest).catch((err) => setError(parseDisplayError(err)));
       const newNotifs = buildNotificationsForRecipients(allUsers, {
         type: NotificationType.STOCK_ADJUSTMENT_REQUEST,
-        title: isDirector
-          ? `Stock Adjusted by Director: ${chemName}`
+        title: isAdminActor
+          ? `Stock Adjusted by ${adminLabel}: ${chemName}`
           : `Stock Adjustment Request: ${chemName} (${container.containerId})`,
-        message: isDirector
-          ? `Director adjusted ${container.containerId} (${chemName}) from ${calc.quantityBefore} to ${calc.quantityAfter} ${container.unit}. Reason: "${params.reason.trim()}"`
+        message: isAdminActor
+          ? `${adminLabel} adjusted ${container.containerId} (${chemName}) from ${calc.quantityBefore} to ${calc.quantityAfter} ${container.unit}. Reason: "${params.reason.trim()}"`
           : `${effectiveProfile.fullName} submitted physical count ${reqId} for ${container.containerId}: ${calc.quantityBefore} → ${calc.quantityAfter} ${container.unit} (Δ ${calc.quantityChange > 0 ? '+' : ''}${calc.quantityChange} ${container.unit}). Reason: "${params.reason.trim()}"`,
-        priority: isDirector ? NotificationPriority.MEDIUM : NotificationPriority.HIGH,
-        targetRoles: isDirector ? [UserRole.TECHNICIAN, UserRole.PROFESSOR] : [UserRole.ADMIN],
+        priority: isAdminActor ? NotificationPriority.MEDIUM : NotificationPriority.HIGH,
+        targetRoles: isAdminActor
+          ? [UserRole.TECHNICIAN, UserRole.PROFESSOR]
+          : [UserRole.ADMIN, UserRole.SECRETARY],
         createdByUserId: effectiveProfile.uid,
         createdByName: effectiveProfile.fullName,
         relatedContainerId: container.containerId,
@@ -2407,12 +2417,12 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         relatedRequestId: reqId,
       });
       saveFirestoreNotifications(newNotifs).catch(() => {});
-      if (isDirector) {
+      if (isAdminActor) {
         correctStockDiscrepancy({
           containerId: container.containerId,
           measuredQuantity: params.measuredQuantity,
           unit: params.unit,
-          reason: `[Stock Adjustment ${reqId} Approved by Director] ${params.reason.trim()}`,
+          reason: `[Stock Adjustment ${reqId} Approved by ${adminLabel}] ${params.reason.trim()}`,
           actor: {
             uid: effectiveProfile.uid,
             fullName: effectiveProfile.fullName,
@@ -2421,12 +2431,12 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
         }).catch((err) => setError(parseDisplayError(err)));
       }
     } else {
-      if (isDirector) {
+      if (isAdminActor) {
         const txId = `COR-${Date.now().toString(36).toUpperCase()}`;
         const newNotifs = buildNotificationsForRecipients(allUsers, {
           type: NotificationType.STOCK_ADJUSTMENT_REQUEST,
-          title: `Stock Adjusted by Director: ${chemName}`,
-          message: `Director adjusted ${container.containerId} (${chemName}) from ${calc.quantityBefore} to ${calc.quantityAfter} ${container.unit}. Reason: "${params.reason.trim()}"`,
+          title: `Stock Adjusted by ${adminLabel}: ${chemName}`,
+          message: `${adminLabel} adjusted ${container.containerId} (${chemName}) from ${calc.quantityBefore} to ${calc.quantityAfter} ${container.unit}. Reason: "${params.reason.trim()}"`,
           priority: NotificationPriority.MEDIUM,
           targetRoles: [UserRole.TECHNICIAN, UserRole.PROFESSOR],
           createdByUserId: effectiveProfile.uid,
@@ -2456,7 +2466,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
               type: TransactionType.CORRECTION,
               timestamp: new Date().toISOString(),
               userId: effectiveProfile.uid,
-              userName: `${effectiveProfile.fullName} (Director)`,
+              userName: `${effectiveProfile.fullName} (${adminLabel})`,
               userRole: effectiveProfile.role,
               laboratoryId: container.laboratoryId,
               containerId: container.containerId,
@@ -2469,7 +2479,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
               newLocation: container.location.code,
               oldStatus: calc.oldStatus,
               newStatus: calc.newStatus,
-              reason: `[Stock Adjustment ${reqId} Approved by Director] ${params.reason.trim()}`,
+              reason: `[Stock Adjustment ${reqId} Approved by ${adminLabel}] ${params.reason.trim()}`,
               adjustmentType: params.adjustmentType,
             },
             ...transactions,
@@ -2481,7 +2491,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           title: `Stock Adjustment Request: ${chemName} (${container.containerId})`,
           message: `${effectiveProfile.fullName} submitted physical count ${reqId} for ${container.containerId}: ${calc.quantityBefore} → ${calc.quantityAfter} ${container.unit} (Δ ${calc.quantityChange > 0 ? '+' : ''}${calc.quantityChange} ${container.unit}). Reason: "${params.reason.trim()}"`,
           priority: NotificationPriority.HIGH,
-          targetRoles: [UserRole.ADMIN],
+          targetRoles: [UserRole.ADMIN, UserRole.SECRETARY],
           createdByUserId: effectiveProfile.uid,
           createdByName: effectiveProfile.fullName,
           relatedContainerId: container.containerId,
@@ -2503,7 +2513,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.APPROVE_STOCK_ADJUSTMENT,
-      'Only the Director can approve stock adjustment requests.'
+      'Only the Director or Secretary can approve stock adjustment requests.'
     );
 
     const reqItem = adjustmentRequests.find((r) => r.requestId === requestId);
@@ -2534,7 +2544,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     const requesterFeedback = buildNotificationsForRecipients(allUsers, {
       type: NotificationType.STOCK_ADJUSTMENT_REQUEST,
       title: `Stock Adjustment ${approve ? 'Approved' : 'Rejected'}: ${reqItem.chemicalName}`,
-      message: `Director ${effectiveProfile.fullName} ${approve ? 'APPROVED' : 'REJECTED'} your stock adjustment request (${reqItem.requestId}) for ${reqItem.containerId} (${reqItem.previousQuantity} → ${reqItem.newQuantity} ${reqItem.unit}).`,
+      message: `${adminRoleLabel(effectiveProfile.role)} ${effectiveProfile.fullName} ${approve ? 'APPROVED' : 'REJECTED'} your stock adjustment request (${reqItem.requestId}) for ${reqItem.containerId} (${reqItem.previousQuantity} → ${reqItem.newQuantity} ${reqItem.unit}).`,
       priority: NotificationPriority.MEDIUM,
       targetRoles: [],
       targetUserIds: [reqItem.requestedByUid],
@@ -2608,7 +2618,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
             type: TransactionType.CORRECTION,
             timestamp: new Date().toISOString(),
             userId: effectiveProfile.uid,
-            userName: `${effectiveProfile.fullName} (Director · Approved ${reqItem.requestedByName}'s Count)`,
+            userName: `${effectiveProfile.fullName} (${adminRoleLabel(effectiveProfile.role)} · Approved ${reqItem.requestedByName}'s Count)`,
             userRole: effectiveProfile.role,
             laboratoryId: container.laboratoryId,
             containerId: container.containerId,
@@ -2662,7 +2672,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       title: `Disposal Request: ${chemName} (${container.containerId})`,
       message: `${effectiveProfile.fullName} requested chemical disposal (${disposalId}) for ${container.containerId} (${chemName}, ${container.currentQuantity} ${container.unit} at ${container.location.code}). Reason: "${params.reason.trim()}"`,
       priority: NotificationPriority.HIGH,
-      targetRoles: [UserRole.ADMIN, UserRole.PROFESSOR, UserRole.TECHNICIAN],
+      targetRoles: [UserRole.ADMIN, UserRole.SECRETARY, UserRole.PROFESSOR, UserRole.TECHNICIAN],
       createdByUserId: effectiveProfile.uid,
       createdByName: effectiveProfile.fullName,
       relatedContainerId: container.containerId,
@@ -2726,7 +2736,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.APPROVE_DISPOSAL_REQUEST,
-      'Only an authorized Professor or Director can approve disposal requests.'
+      'Only an authorized Professor, Director, or Secretary can approve disposal requests.'
     );
 
     const item = disposalRequests.find((d) => d.disposalId === disposalId);
@@ -2756,7 +2766,9 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           : 'Container restored to active stock.'
       }`,
       priority: approve ? NotificationPriority.HIGH : NotificationPriority.MEDIUM,
-      targetRoles: approve ? [UserRole.TECHNICIAN, UserRole.ADMIN] : [UserRole.ADMIN],
+      targetRoles: approve
+        ? [UserRole.TECHNICIAN, UserRole.ADMIN, UserRole.SECRETARY]
+        : [UserRole.ADMIN, UserRole.SECRETARY],
       targetUserIds: [item.requestedByUid],
       createdByUserId: effectiveProfile.uid,
       createdByName: effectiveProfile.fullName,
@@ -2841,13 +2853,13 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.RECORD_APPROVED_DISPOSAL,
-      'Only a Lab Engineer or Director can record physical chemical disposal.'
+      'Only a Lab Engineer, Director, or Secretary can record physical chemical disposal.'
     );
 
     const item = disposalRequests.find((d) => d.disposalId === disposalId);
     if (!item || item.status !== 'APPROVED') {
       throw new Error(
-        'Disposal must be APPROVED by a Professor or Director before recording physical disposal.'
+        'Disposal must be APPROVED by a Professor, Director, or Secretary before recording physical disposal.'
       );
     }
 
@@ -2978,7 +2990,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       title: `New Purchase Request: ${newItem.chemicalName} (${newItem.requestedQuantity} ${newItem.unit})`,
       message: `${effectiveProfile.fullName} requested ${newItem.requestedQuantity} ${newItem.unit} of ${newItem.chemicalName} (${purchaseId}) from ${newItem.supplier}. Reason: "${newItem.reason}"`,
       priority: NotificationPriority.MEDIUM,
-      targetRoles: [UserRole.ADMIN, UserRole.PROFESSOR],
+      targetRoles: [UserRole.ADMIN, UserRole.SECRETARY, UserRole.PROFESSOR],
       targetUserIds: [effectiveProfile.uid],
       createdByUserId: effectiveProfile.uid,
       createdByName: effectiveProfile.fullName,
@@ -3005,7 +3017,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.APPROVE_PURCHASE_REQUEST,
-      'Only the Director or an authorized Professor can approve purchase requests.'
+      'Only the Director, Secretary, or an authorized Professor can approve purchase requests.'
     );
 
     const target = purchaseRequests.find((p) => p.purchaseId === purchaseId);
@@ -3029,7 +3041,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
           title: `Purchase ${nextStage === 'APPROVED' ? 'Approved' : 'Ordered'}: ${target.chemicalName}`,
           message: `${effectiveProfile.fullName} marked purchase request ${target.purchaseId} (${target.requestedQuantity} ${target.unit} ${target.chemicalName}) as ${nextStage}. Lab Engineer will receive delivery into Cabinet ${target.targetPlacementBox || 'FLAM-01'}.`,
           priority: NotificationPriority.MEDIUM,
-          targetRoles: [UserRole.TECHNICIAN, UserRole.ADMIN],
+          targetRoles: [UserRole.TECHNICIAN, UserRole.ADMIN, UserRole.SECRETARY],
           targetUserIds: [target.requestedByUid],
           createdByUserId: effectiveProfile.uid,
           createdByName: effectiveProfile.fullName,
@@ -3071,7 +3083,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
     assertRolePermission(
       effectiveProfile.role,
       PermissionAction.RECEIVE_VALIDATED_DELIVERY,
-      'Only a Lab Engineer or Director can receive incoming deliveries and add them to inventory.'
+      'Only a Lab Engineer, Director, or Secretary can receive incoming deliveries and add them to inventory.'
     );
 
     const item = purchaseRequests.find((p) => p.purchaseId === params.purchaseId);
@@ -3163,7 +3175,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       title: `Purchase Received & Available: ${item.chemicalName} (${containerId})`,
       message: `${effectiveProfile.fullName} received ${item.requestedQuantity} ${item.unit} of ${item.chemicalName} (Purchase ${item.purchaseId}) and registered container ${containerId} at ${loc.code}. Now available for laboratory use.`,
       priority: NotificationPriority.MEDIUM,
-      targetRoles: [UserRole.ADMIN, UserRole.PROFESSOR],
+      targetRoles: [UserRole.ADMIN, UserRole.SECRETARY, UserRole.PROFESSOR],
       targetUserIds: [item.requestedByUid],
       createdByUserId: effectiveProfile.uid,
       createdByName: effectiveProfile.fullName,

@@ -55,6 +55,7 @@ import {
   toFirestoreLocationMap,
 } from './inventoryDomain';
 import { PermissionAction } from '../types/inventory';
+import { isAdminRole } from '../utils/roles';
 
 export interface TransactionActor {
   uid: string;
@@ -202,7 +203,7 @@ export async function addChemicalStock(params: {
   assertRolePermission(
     actor.role,
     PermissionAction.RECORD_STOCK_ADDITION,
-    'Only the Director or Technician can record stock additions.'
+    'Only the Director, Secretary, or Technician can record stock additions.'
   );
   if (!isValidEntityId(containerId)) {
     throw new Error('Invalid container ID format.');
@@ -344,8 +345,8 @@ export async function resolveFlaggedContainer(params: {
   actor: TransactionActor;
 }): Promise<{ newStatus: ContainerStatus; transactionId: string }> {
   const { containerId, resolution, reason, actor } = params;
-  if (actor.role !== UserRole.ADMIN && actor.role !== UserRole.PROFESSOR) {
-    throw new Error('Permission Denied: Only a Lab Director or Professor can resolve identification/quarantine flags.');
+  if (!isAdminRole(actor.role) && actor.role !== UserRole.PROFESSOR) {
+    throw new Error('Permission Denied: Only a Lab Director, Secretary, or Professor can resolve identification/quarantine flags.');
   }
   if (!reason || reason.trim().length === 0) {
     throw new Error('Validation Error: Mandatory review note is required to resolve container status.');
@@ -415,11 +416,11 @@ export async function correctContainerInventory(params: {
 }): Promise<{ quantityBefore: number; quantityAfter: number; quantityChange: number; transactionId: string }> {
   const { containerId, measuredQuantity, unit, reason, actor } = params;
   if (
-    actor.role !== UserRole.ADMIN &&
+    !isAdminRole(actor.role) &&
     actor.role !== UserRole.PROFESSOR &&
     actor.role !== UserRole.TECHNICIAN
   ) {
-    throw new Error('Permission Denied: Only Lab Engineers/Technicians, Professors, or the Lab Director can log physical stock corrections.');
+    throw new Error('Permission Denied: Only Lab Engineers/Technicians, Professors, the Lab Director, or the Secretary can log physical stock corrections.');
   }
 
   const containerRef = doc(db, 'containers', containerId);
@@ -501,7 +502,7 @@ export async function transferContainerLocation(params: {
   assertRolePermission(
     actor.role,
     PermissionAction.MOVE_BETWEEN_LOCATIONS,
-    'Only the Director or Technician can move chemicals between storage locations.'
+    'Only the Director, Secretary, or Technician can move chemicals between storage locations.'
   );
   if (!reason || reason.trim().length === 0) {
     throw new Error('Validation Error: Reason is required for location transfer.');
@@ -725,7 +726,7 @@ export async function createChemicalContainer(input: {
 }
 
 /**
- * Archive / Permanently Delete Physical Container (Strictly Restricted to DIRECTOR ONLY)
+ * Archive / Permanently Delete Physical Container (Strictly Restricted to DIRECTOR or SECRETARY)
  * Professors, Technicians, and PhD Students are explicitly blocked from permanently deleting inventory records.
  */
 export async function deleteChemicalContainer(params: {
@@ -736,7 +737,7 @@ export async function deleteChemicalContainer(params: {
   assertRolePermission(
     actor.role,
     PermissionAction.ARCHIVE_REMOVE_CHEMICAL,
-    'Only the Director can archive or permanently remove chemical records.'
+    'Only the Director or Secretary can archive or permanently remove chemical records.'
   );
   try {
     await deleteDoc(doc(db, 'containers', containerId));
@@ -768,7 +769,7 @@ export async function createLaboratory(input: { labId: string; name: string }): 
 }
 
 /**
- * Lab Director ONLY: Provision a new Researcher Profile in Firestore
+ * Lab Director / Secretary ONLY: Provision a new Researcher Profile in Firestore
  */
 export async function createLabMemberProfile(input: {
   uid?: string;
@@ -779,8 +780,8 @@ export async function createLabMemberProfile(input: {
   status?: UserStatus;
   actor: TransactionActor;
 }): Promise<string> {
-  if (input.actor.role !== UserRole.ADMIN) {
-    throw new Error('Permission Denied: Only the Director profile has access to add or remove profiles.');
+  if (!isAdminRole(input.actor.role)) {
+    throw new Error('Permission Denied: Only the Director or Secretary profile has access to add or remove profiles.');
   }
 
   const uid = input.uid
@@ -807,14 +808,14 @@ export async function createLabMemberProfile(input: {
 }
 
 /**
- * Lab Director ONLY: Remove a Researcher Profile from Firestore
+ * Lab Director / Secretary ONLY: Remove a Researcher Profile from Firestore
  */
 export async function deleteLabMemberProfile(params: {
   targetUid: string;
   actor: TransactionActor;
 }): Promise<void> {
-  if (params.actor.role !== UserRole.ADMIN) {
-    throw new Error('Permission Denied: Only the Director profile has access to add or remove profiles.');
+  if (!isAdminRole(params.actor.role)) {
+    throw new Error('Permission Denied: Only the Director or Secretary profile has access to add or remove profiles.');
   }
   try {
     await deleteDoc(doc(db, 'users', params.targetUid));

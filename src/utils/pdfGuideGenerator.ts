@@ -80,7 +80,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
       'Full CRUD on Chemical Catalog Products & Physical Bottles',
       'Approve / Restore or Mark for Disposal Quarantined Containers',
       'Perform Express Bench Withdrawals with Automatic Subtraction',
-      'Delete Physical Containers (Unlocked for Director)',
+      'Delete Physical Containers (Unlocked for Director or Secretary)',
     ],
     restrictedActions: [
       'Cannot modify or delete historical records in the Immutable Audit Trail (Append-Only Security Rule)',
@@ -88,7 +88,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     screenMockup: {
       activeNav: 'Profile',
       windowTitle: 'LCSCO Console - Director Governance & Profile Control',
-      primaryWidgetTitle: 'Director Exclusive: Add or Remove LCSCO Profiles + Quarantine Queue',
+      primaryWidgetTitle: 'Administrator: Add or Remove LCSCO Profiles + Quarantine Queue',
       primaryWidgetSubtitle: 'ACD-201 (Hydrochloric Acid 37%) - Status: NEEDS_IDENTIFICATION',
       deleteButtonState: 'ENABLED',
       highlightBanner: 'DIRECTOR PRIVILEGE: [Add/Remove Profiles]  [Restore/Dispose]  [Delete Unlocked]',
@@ -97,16 +97,16 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     stepByStepWorkflows: [
       {
         stepNumber: 'WORKFLOW 1',
-        workflowTitle: 'Adding or Removing LCSCO Researcher Profiles (Director Exclusive)',
+        workflowTitle: 'Adding or Removing LCSCO Researcher Profiles (Administrator)',
         navigationPath: 'Navigation Bar -> Profile',
         instructions: [
           'Sign in with your LCSCO laboratory account (Firebase Authentication — Google or email/password).',
           'Click "Profile" in the top navigation bar (next to Dashboard and Guide / How to Use).',
           'Update your own password or attach a profile picture in "My Account & Security Settings".',
-          'Scroll to "Director Exclusive: Add or Remove LCSCO Profiles" to create new accounts or click the red "Remove Profile" button next to any user.',
+          'Scroll to "Administrator: Add or Remove LCSCO Profiles" to create new accounts or click the red "Remove Profile" button next to any user.',
         ],
         expectedResult:
-          'Only the Director can add or remove profiles; other accounts see a locked notice.',
+          'Only the Director or Secretary can add or remove profiles; other accounts see a locked notice.',
       },
       {
         stepNumber: 'WORKFLOW 2',
@@ -151,7 +151,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     ],
     restrictedActions: [
       'LOCKED from Deleting Containers (Trash button displays a Lock icon)',
-      'LOCKED from Adding or Removing User Profiles (Director Only)',
+      'LOCKED from Adding or Removing User Profiles (Director or Secretary Only)',
     ],
     screenMockup: {
       activeNav: 'Reagents',
@@ -217,7 +217,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
       'Modify Own Profile Picture & Password in the Profile Section',
     ],
     restrictedActions: [
-      'LOCKED from Adding or Removing User Profiles (Reserved exclusively for Director)',
+      'LOCKED from Adding or Removing User Profiles (Reserved for Director or Secretary)',
       'Cannot alter or erase historical entries in the Immutable Audit Trail',
     ],
     screenMockup: {
@@ -284,7 +284,7 @@ export const LCSCO_ROLE_MANUALS: RoleManualSpec[] = [
     ],
     restrictedActions: [
       'STRICTLY LOCKED from Deleting Any Bottle or Catalog Item (Lock icon shown)',
-      'STRICTLY LOCKED from Adding or Removing User Profiles (Director Only)',
+      'STRICTLY LOCKED from Adding or Removing User Profiles (Admin Only)',
     ],
     screenMockup: {
       activeNav: 'Dashboard',
@@ -737,8 +737,11 @@ export function downloadLCSCOUserGuidePDF(targetRole?: UserRole | 'ALL'): void {
     });
     doc.save('LCSCO_Inventory_Complete_4_Profiles_User_Guide.pdf');
   } else {
+    // The Secretary shares the Director's full manual; reuse it rather than
+    // falling through to the first role by accident.
+    const requestedRole = targetRole === UserRole.SECRETARY ? UserRole.ADMIN : targetRole;
     const found =
-      LCSCO_ROLE_MANUALS.find((m) => m.role === targetRole) || LCSCO_ROLE_MANUALS[0];
+      LCSCO_ROLE_MANUALS.find((m) => m.role === requestedRole) || LCSCO_ROLE_MANUALS[0];
     renderRoleGuidePage(doc, found, true);
     const cleanName = found.title.toLowerCase().replace(/\s+/g, '_');
     doc.save(`LCSCO_Inventory_${cleanName}_User_Guide.pdf`);
