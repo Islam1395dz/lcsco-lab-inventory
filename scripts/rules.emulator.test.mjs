@@ -24,6 +24,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import { beforeAll, afterAll, beforeEach, describe, it } from 'vitest';
 
@@ -263,6 +264,72 @@ describe('Phase 0 — the Dirty Dozen payloads against live rules', () => {
         ...tx,
         transactionId: 'TX-2',
         quantityAfter: 600,
+      })
+    );
+  });
+
+  it('registers a container and its opening transaction in one atomic commit', async () => {
+    await provisionProfile('tech', 'TECHNICIAN');
+    const director = makeUser('director', { email: BOOTSTRAP_EMAIL });
+    await assertSucceeds(
+      setDoc(director.firestore().doc('products/PROD-REG'), {
+        ...baseProductDoc,
+        productId: 'PROD-REG',
+      })
+    );
+
+    // Mirrors createChemicalContainer(): the container row and its first
+    // ADDITION are committed together, so the transactions rule must resolve
+    // the container with existsAfter() rather than exists().
+    const tech = makeUser('tech');
+    const db = tech.firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'containers/CONT-REG'), {
+      ...baseContainerDoc,
+      containerId: 'CONT-REG',
+      productId: 'PROD-REG',
+    });
+    batch.set(doc(db, 'transactions/REG-1'), {
+      transactionId: 'REG-1',
+      type: 'ADDITION',
+      userId: uid('tech'),
+      userName: 'Member tech',
+      laboratoryId: 'LCSCO',
+      containerId: 'CONT-REG',
+      productId: 'PROD-REG',
+      quantityChange: 500,
+      quantityBefore: 0,
+      quantityAfter: 500,
+      unit: 'g',
+      oldLocation: 'R204-FLAM01-L-S01-P01',
+      newLocation: 'R204-FLAM01-L-S01-P01',
+      oldStatus: 'NORMAL',
+      newStatus: 'NORMAL',
+      reason: 'Initial container registration (Lot: LOT-1)',
+      timestamp: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
+
+    // Movements against a container that was never committed stay rejected.
+    await assertFails(
+      setDoc(tech.firestore().doc('transactions/TX-404'), {
+        transactionId: 'TX-404',
+        type: 'WITHDRAWAL',
+        userId: uid('tech'),
+        userName: 'Member tech',
+        laboratoryId: 'LCSCO',
+        containerId: 'CONT-404',
+        productId: 'PROD-REG',
+        quantityChange: -50,
+        quantityBefore: 500,
+        quantityAfter: 450,
+        unit: 'g',
+        oldLocation: 'R204-FLAM01-L-S01-P01',
+        newLocation: 'R204-FLAM01-L-S01-P01',
+        oldStatus: 'NORMAL',
+        newStatus: 'NORMAL',
+        reason: 'Bench test',
+        timestamp: serverTimestamp(),
       })
     );
   });

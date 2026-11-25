@@ -517,9 +517,15 @@ service cloud.firestore {
         isValidContainer(incoming()) &&
         incoming().containerId == existing().containerId &&
         incoming().productId == existing().productId &&
-        incoming().initialQuantity == existing().initialQuantity &&
-        incoming().unit == existing().unit &&
         incoming().createdBy == existing().createdBy &&
+        // Director-level identities may correct the stock baseline
+        // (initialQuantity / unit) from the full-record edit form; every other
+        // role keeps both immutable so stock cannot be inflated silently.
+        (
+          isAdmin() ||
+          (incoming().initialQuantity == existing().initialQuantity &&
+            incoming().unit == existing().unit)
+        ) &&
         (isBootstrappedAdmin() || canUpdateContainer(tokenRole(), incoming(), existing()));
 
       allow delete: if isVerified() && isValidId(containerId) && (isAdmin() || isTechOrAbove());
@@ -539,8 +545,11 @@ service cloud.firestore {
         incoming().transactionId == transactionId &&
         incoming().userId == request.auth.uid &&
         isActiveLabMember() &&
-        exists(/databases/$(database)/documents/containers/$(incoming().containerId)) &&
-        exists(/databases/$(database)/documents/products/$(incoming().productId));
+        exists(/databases/$(database)/documents/products/$(incoming().productId)) &&
+        // existsAfter() projects the request's own writes: registration commits
+        // containers/{id} and its opening ADDITION in one atomic write, and
+        // exists() would only ever see the pre-commit state and reject it.
+        existsAfter(/databases/$(database)/documents/containers/$(incoming().containerId));
 
       allow update: if false;
       allow delete: if false;

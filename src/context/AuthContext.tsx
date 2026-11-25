@@ -3197,6 +3197,7 @@ export const AuthAndInventoryProvider: React.FC<{ children: React.ReactNode }> =
       updateContainerAndProductInFirestore({
         product: matchingProduct,
         container: newBottle,
+        createContainer: true,
         transaction: {
           transactionId: txId,
           type: TransactionType.ADDITION,

@@ -160,6 +160,8 @@ describe('Firestore Security Rules — security invariants present in rules sour
       'exists(/databases/$(database)/documents/products/$(incoming().productId))'
     );
     expect(block).toContain('incoming().unit == existing().unit');
+    expect(block).toContain('isAdmin() ||');
+    expect(block).toContain('incoming().initialQuantity == existing().initialQuantity');
     expect(block).toContain('incoming().createdBy == request.auth.uid');
 
     const validation = rulesContent.slice(
@@ -167,6 +169,25 @@ describe('Firestore Security Rules — security invariants present in rules sour
       rulesContent.indexOf('function canUpdateContainer')
     );
     expect(validation).toContain('data.currentQuantity is number && data.currentQuantity >= 0');
+  });
+
+  it('validates the transaction container with existsAfter so atomic registration passes', () => {
+    // Registration commits containers/{id} and transactions/{REG-*} together.
+    // exists() only sees the pre-commit state, so the container check must
+    // project the request's own writes via existsAfter().
+    const block = rulesContent.slice(
+      rulesContent.indexOf('match /transactions/{transactionId}'),
+      rulesContent.indexOf('match /physicalLocations/{locationId}')
+    );
+    expect(block).toContain(
+      'exists(/databases/$(database)/documents/products/$(incoming().productId))'
+    );
+    expect(block).toContain(
+      'existsAfter(/databases/$(database)/documents/containers/$(incoming().containerId))'
+    );
+    expect(block).not.toContain(
+      'exists(/databases/$(database)/documents/containers/$(incoming().containerId))'
+    );
   });
 
   it('enforces strict key allowlists and string size bounds across all entities', () => {

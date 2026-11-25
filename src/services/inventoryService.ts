@@ -1251,46 +1251,60 @@ export async function updateContainerAndProductInFirestore(params: {
   product: Product;
   container: ChemicalContainer;
   transaction: InventoryTransaction;
+  /**
+   * True only when the container row does not exist yet (purchase receipt).
+   * Edits must never rewrite `createdAt`: the products update rule forbids
+   * touching the creation time, and a plain set() would delete it outright.
+   */
+  createContainer?: boolean;
 }): Promise<void> {
   try {
     const batch = writeBatch(db);
-    batch.set(doc(db, 'products', params.product.productId), {
-      productId: params.product.productId,
-      chemicalName: params.product.chemicalName,
-      casNumber: params.product.casNumber,
-      formula: params.product.formula,
-      molecularWeight: params.product.molecularWeight,
-      hazardClass: params.product.hazardClass,
-      storageRequirements: params.product.storageRequirements,
-      defaultUnit: params.product.defaultUnit,
-      minimumStock: params.product.minimumStock,
-      reorderLevel: params.product.reorderLevel,
-      sdsUrl: params.product.sdsUrl,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      chemicalClassification: params.product.chemicalClassification || 'Other',
-      storageClassification: params.product.storageClassification || 'General storage',
-    });
+    // merge: true so untouched fields (notably createdAt) survive the write.
+    batch.set(
+      doc(db, 'products', params.product.productId),
+      {
+        productId: params.product.productId,
+        chemicalName: params.product.chemicalName,
+        casNumber: params.product.casNumber,
+        formula: params.product.formula,
+        molecularWeight: params.product.molecularWeight,
+        hazardClass: params.product.hazardClass,
+        storageRequirements: params.product.storageRequirements,
+        defaultUnit: params.product.defaultUnit,
+        minimumStock: params.product.minimumStock,
+        reorderLevel: params.product.reorderLevel,
+        sdsUrl: params.product.sdsUrl,
+        updatedAt: serverTimestamp(),
+        chemicalClassification: params.product.chemicalClassification || 'Other',
+        storageClassification: params.product.storageClassification || 'General storage',
+      },
+      { merge: true }
+    );
 
-    batch.set(doc(db, 'containers', params.container.containerId), {
-      containerId: params.container.containerId,
-      productId: params.container.productId,
-      laboratoryId: params.container.laboratoryId,
-      initialQuantity: params.container.initialQuantity,
-      currentQuantity: params.container.currentQuantity,
-      unit: params.container.unit,
-      location: toFirestoreLocationMap(params.container.location),
-      storageCondition: params.container.storageCondition,
-      status: params.container.status,
-      lotNumber: params.container.lotNumber,
-      supplier: params.container.supplier,
-      expiryDate: params.container.expiryDate,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      createdBy: params.container.createdBy,
-      chemicalClassification: params.container.chemicalClassification || 'Other',
-      storageClassification: params.container.storageClassification || 'General storage',
-    });
+    batch.set(
+      doc(db, 'containers', params.container.containerId),
+      {
+        containerId: params.container.containerId,
+        productId: params.container.productId,
+        laboratoryId: params.container.laboratoryId,
+        initialQuantity: params.container.initialQuantity,
+        currentQuantity: params.container.currentQuantity,
+        unit: params.container.unit,
+        location: toFirestoreLocationMap(params.container.location),
+        storageCondition: params.container.storageCondition,
+        status: params.container.status,
+        lotNumber: params.container.lotNumber,
+        supplier: params.container.supplier,
+        expiryDate: params.container.expiryDate,
+        updatedAt: serverTimestamp(),
+        ...(params.createContainer ? { createdAt: serverTimestamp() } : {}),
+        createdBy: params.container.createdBy,
+        chemicalClassification: params.container.chemicalClassification || 'Other',
+        storageClassification: params.container.storageClassification || 'General storage',
+      },
+      { merge: true }
+    );
 
     batch.set(doc(db, 'transactions', params.transaction.transactionId), {
       transactionId: params.transaction.transactionId,

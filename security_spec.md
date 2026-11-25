@@ -6,14 +6,15 @@
 3. **PII Isolation (`users/{uid}`)**: User documents contain `email` and `fullName`. Only the document owner (`request.auth.uid == uid`) or a verified Admin/Professor (`isAdminOrProf()`) can read a user document. Non-admin users cannot self-assign `ADMIN`, `SECRETARY`, `PROFESSOR`, or `TECHNICIAN` roles on registration, nor can they elevate their own `role` or `status` on update.
 4. **Relational Existence (`containers`, `transactions`)**:
    - A `container` cannot be created unless `exists(/databases/$(database)/documents/products/$(incoming().productId))` and `exists(/databases/$(database)/documents/laboratories/$(incoming().laboratoryId))` are true.
-   - A `transaction` cannot be created unless `exists(/databases/$(database)/documents/containers/$(incoming().containerId))` and `exists(/databases/$(database)/documents/products/$(incoming().productId))` are true.
+   - A `transaction` cannot be created unless `exists(/databases/$(database)/documents/products/$(incoming().productId))` is true and the container it references exists. The container check uses `existsAfter()` (not `exists()`), because registration commits the new `containers/{id}` row and its opening `ADDITION` transaction in one atomic write, and `exists()` is evaluated against the pre-request state only — using it here rejects every registration. `existsAfter()` projects the request's own writes, so a movement still cannot reference a container that neither exists nor is created by the same atomic commit.
 5. **Immutable Audit Trail (`transactions/{transactionId}`)**:
    - Strictly append-only. `allow update, delete: if false;` for ALL users, including `ADMIN` and `SECRETARY`.
    - `userId` must match `request.auth.uid`, and `timestamp` must equal `request.time`.
 6. **Negative Stock & Terminal State Locking (`containers/{containerId}`)**:
    - `currentQuantity >= 0` and `initialQuantity > 0` at all times.
    - Once a container reaches `DISPOSAL_REQUIRED`, non-Admin/Professor users cannot modify it.
-   - `containerId`, `productId`, `initialQuantity`, `unit`, `createdAt`, and `createdBy` are immortal (immutable) after creation.
+   - `containerId`, `productId`, `createdBy` and `createdAt` are immortal (immutable) after creation for every role.
+   - `initialQuantity` and `unit` are immutable for Professors, Technicians and members; only Director-level identities (`isAdmin()`: ADMIN, SECRETARY, bootstrap) may correct them from the full-record edit form, which also appends a `CORRECTION` transaction to the audit log.
 7. **Secure List Queries**: Every `allow list` rule evaluates `resource.data` (e.g., `resource.data.currentQuantity >= 0`, `resource.data.molecularWeight >= 0`, etc.) and user authorization without delegating security solely to the client.
 
 ---
