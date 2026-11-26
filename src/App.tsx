@@ -57,20 +57,54 @@ export type AppRoute =
   | 'settings'    // Paramètres
   | 'container';  // Detail view
 
+
 const TrialModeBanner: React.FC = () => (
   <div
     role="status"
     aria-live="polite"
-    className="print:hidden w-full bg-amber-50/95 backdrop-blur-xs border-b border-amber-200/80 text-amber-950 px-3 sm:px-6 py-1.5"
+    className="print:hidden w-full overflow-hidden bg-red-600 border-b border-red-700 text-white py-2"
   >
-    <div className="max-w-7xl mx-auto flex items-center justify-center gap-2 text-center">
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-      <p className="text-[11px] sm:text-xs font-medium leading-snug tracking-tight text-amber-900">
-        MODE TEST — Cette application est actuellement en phase d’essai. Les données peuvent être modifiées ou supprimées pendant le développement.
-      </p>
+    <div className="flex w-max animate-marquee items-center whitespace-nowrap">
+      {[1, 2, 3, 4].map((item) => (
+        <span
+          key={item}
+          className="flex items-center gap-3 px-6 text-xs sm:text-sm font-semibold tracking-wide"
+        >
+          <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse shrink-0" />
+
+          LABORATORY NOTICE: All reagents and chemicals must
+          be returned to their designated storage locations
+          immediately after use.
+
+          <span className="mx-4 text-red-200">✦</span>
+
+          Every reagent consumption must be recorded in the
+          inventory system, including the quantity used.
+
+          <span className="mx-4 text-red-200">✦</span>
+        </span>
+      ))}
     </div>
+
+    <style>{`
+      @keyframes marquee {
+        from { transform: translateX(0); }
+        to { transform: translateX(-50%); }
+      }
+
+      .animate-marquee {
+        animation: marquee 35s linear infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .animate-marquee {
+          animation: none;
+        }
+      }
+    `}</style>
   </div>
 );
+
 
 const MainShell: React.FC = () => {
   const {
